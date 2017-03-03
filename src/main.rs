@@ -15,11 +15,17 @@ pub struct LexerState {
     tok_buf: Option<Token>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum SExpr {
     Symbol(String),
     Number(i32),
+    Bool(bool),
     List(Vec<SExpr>),
+
+    Define(String, Box<SExpr>),
+    Let(Vec<(String, SExpr)>, Box<SExpr>),
+    If(Box<SExpr>, Box<SExpr>, Box<SExpr>),
+    App(Box<SExpr>, Vec<SExpr>),
 }
 
 fn unread(ls: &mut LexerState, tok: Token) {
@@ -33,7 +39,7 @@ fn unread(ls: &mut LexerState, tok: Token) {
 
 fn is_valid_symbol_start(c: char) -> bool {
     // TODO: avoid allocatiing this in each call
-    let SymbolStartChars = vec!['+', '-', '*', '/'];
+    let SymbolStartChars = vec!['+', '-', '*', '/', '#'];
 
     let mut ret = false;
     if c.is_alphabetic() { ret = true; }
@@ -135,6 +141,65 @@ fn get_expr(ls: &mut LexerState) -> SExpr {
     }
 }
 
+fn get_ast(expr: SExpr) -> SExpr {
+    match expr {
+        SExpr::Symbol(sym) => {
+            match &sym[..] {
+                "#f" => SExpr::Bool(false),
+                "#t" => SExpr::Bool(true),
+                _ => SExpr::Symbol(sym),
+            }
+        },
+        SExpr::List(elts) =>
+            match elts[0].clone() {
+                SExpr::Symbol(sym) => {
+                    match &sym[..] {
+                        "define" => {
+                            // TODO: Check that elts has correct length
+                            if let SExpr::Symbol(name) = elts[1].clone() {
+                                let e = elts[2].clone();
+                                return SExpr::Define(name, Box::new(e));
+                            }
+                            else {
+                                panic!("expected `name` to be a symbol");
+                            }
+                        },
+                        "if" => {
+                            return SExpr::If(Box::new(get_ast(elts[1].clone())),
+                                             Box::new(get_ast(elts[2].clone())),
+                                             Box::new(get_ast(elts[3].clone())));
+                        },
+                        "let" => {
+                            let bindings = match elts[1] {
+                                SExpr::List(ref bs) => bs,
+                                _ => panic!("let bindings"),
+                            };
+
+                            let mut astified_bindings = vec![];
+                            for bind_pair in bindings {
+                                let (key, val) = match bind_pair {
+                                    // TODO: check length
+                                    &SExpr::List(ref kv) => (kv[0].clone(), kv[1].clone()),
+                                    _ => panic!("non-list in let-binding"),
+                                };
+
+                                let keyname = match key {
+                                    SExpr::Symbol(k) => k,
+                                    _ => panic!("let binding key is not symbol"),
+                                };
+                                astified_bindings.push((keyname, get_ast(val)));
+                            }
+                            return SExpr::Let(astified_bindings, Box::new(get_ast(elts[2].clone())));
+                        },
+                        _ => SExpr::App(Box::new(elts[0].clone()), elts[1..].to_vec()),
+                    }
+                }
+                _ => panic!("NYI"),
+            },
+        _ => expr,
+    }
+}
+
 fn read_input() -> io::Result<()> {
     let mut input = String::new();
 
@@ -146,7 +211,7 @@ fn read_input() -> io::Result<()> {
         tok_buf: None,
     };
 
-    println!("{:?}", get_expr(&mut lexer));
+    println!("{:?}", get_ast(get_expr(&mut lexer)));
 
     Ok(())
 }
