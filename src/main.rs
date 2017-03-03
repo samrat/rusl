@@ -1,4 +1,5 @@
 use std::io;
+use std::collections::HashMap;
 
 #[derive(Debug, PartialEq, Clone)]
 enum Token {
@@ -15,13 +16,14 @@ pub struct LexerState {
     tok_buf: Option<Token>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 enum SExpr {
     Symbol(String),
     Number(i32),
     Bool(bool),
     List(Vec<SExpr>),
 
+    // TODO: change define to be special-form for function definition
     Define(String, Box<SExpr>),
     Let(Vec<(String, SExpr)>, Box<SExpr>),
     If(Box<SExpr>, Box<SExpr>, Box<SExpr>),
@@ -211,7 +213,10 @@ fn read_input() -> io::Result<()> {
         tok_buf: None,
     };
 
-    println!("{:?}", get_ast(get_expr(&mut lexer)));
+    let mut uniquify_mapping = HashMap::new();
+
+    println!("{:?}", uniquify(&mut uniquify_mapping,
+                              get_ast(get_expr(&mut lexer))));
 
     Ok(())
 }
@@ -231,6 +236,59 @@ fn test_parser() {
                                                                    SExpr::Number(12)])])),
                          Box::new(SExpr::Number(17))),
                get_ast(get_expr(&mut lexer)));
+}
+
+
+static mut var_counter : i32 = 0;
+fn get_unique_varname(stem: &str) -> String {
+    unsafe {
+        var_counter += 1;
+        return stem.to_string() + &"." + &var_counter.to_string();
+    }
+}    
+
+fn uniquify(mapping: &mut HashMap<String, String>, expr: SExpr) 
+            -> SExpr {
+    match expr {
+        SExpr::Symbol(name) => 
+            SExpr::Symbol(mapping.get(&name).unwrap().to_string()),
+        SExpr::Number(_) => expr,
+        SExpr::Bool(_) => expr,
+        SExpr::Let(bindings, body) => {
+            let mut new_bindings = vec![];
+            for (k,v) in bindings {
+                let uniq_k = get_unique_varname(&k);
+                mapping.insert(k.clone(), uniq_k.clone());
+                new_bindings.push((uniq_k, v));
+            }
+            return SExpr::Let(new_bindings, Box::new(uniquify(mapping, *body)));
+        },
+        SExpr::List(elts) => {
+            let mut new_elts = vec![];
+            for e in elts {
+                new_elts.push(uniquify(mapping, e));
+            }
+            
+            return SExpr::List(new_elts);
+        }
+        SExpr::Define(name, val) => {
+            return SExpr::Define(name,
+                                 Box::new(uniquify(mapping, *val)));
+        },
+        SExpr::If(cond, thn, els) => {
+            return SExpr::If(Box::new(uniquify(mapping, *cond)),
+                             Box::new(uniquify(mapping, *thn)),
+                             Box::new(uniquify(mapping, *els)));
+        },
+        SExpr::App(f, args) => {
+            let mut new_args = vec![];
+            for a in args {
+                new_args.push(uniquify(mapping, a));
+            }
+            return SExpr::App(f, new_args);
+        },
+        //_ => expr,
+    }
 }
 
 fn main() {
