@@ -1,0 +1,6 @@
+[package]
+name = "schemers"
+version = "0.1.0"
+authors = ["Samrat Man Singh <samratmansingh@gmail.com>"]
+
+[dependencies]
