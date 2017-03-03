@@ -15,7 +15,7 @@ pub struct LexerState {
     tok_buf: Option<Token>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 enum SExpr {
     Symbol(String),
     Number(i32),
@@ -214,6 +214,23 @@ fn read_input() -> io::Result<()> {
     println!("{:?}", get_ast(get_expr(&mut lexer)));
 
     Ok(())
+}
+
+#[test]
+fn test_parser() {
+    let mut input = String::from("(if #f (+ 42 (foo 12)) 17)");
+    let mut lexer = LexerState {
+        s: input,
+        pos: 0,
+        tok_buf: None,
+    };
+    assert_eq!(SExpr::If(Box::new(SExpr::Bool(false)),
+                         Box::new(SExpr::App(Box::new(SExpr::Symbol("+".to_string())),
+                                             vec![SExpr::Number(42),
+                                                  SExpr::List(vec![SExpr::Symbol("foo".to_string()),
+                                                                   SExpr::Number(12)])])),
+                         Box::new(SExpr::Number(17))),
+               get_ast(get_expr(&mut lexer)));
 }
 
 fn main() {
