@@ -30,6 +30,23 @@ enum SExpr {
     App(Box<SExpr>, Vec<SExpr>),
 }
 
+#[derive(Clone, Debug)]
+enum Arg {
+    Number(i32),
+    Var(String),
+}
+
+#[derive(Clone, Debug)]
+enum Flat {
+    Symbol(String),
+    Number(i32),
+    Bool(bool),
+    Assign(String, Box<Flat>),
+    Return(Arg),
+    If(Box<Flat>, Vec<Flat>, Vec<Flat>),
+    EqP(Box<Flat>, Box<Flat>),
+}
+
 fn unread(ls: &mut LexerState, tok: Token) {
     if let Some(_) = ls.tok_buf {
         println!("error: unread buffer full");
@@ -41,12 +58,12 @@ fn unread(ls: &mut LexerState, tok: Token) {
 
 fn is_valid_symbol_start(c: char) -> bool {
     // TODO: avoid allocatiing this in each call
-    let SymbolStartChars = vec!['+', '-', '*', '/', '#'];
+    let symbol_start_chars = vec!['+', '-', '*', '/', '#'];
 
     let mut ret = false;
     if c.is_alphabetic() { ret = true; }
     else {
-        for s in SymbolStartChars {
+        for s in symbol_start_chars {
             if c == s { ret = true; break; }
             else { continue; }
         }
@@ -215,8 +232,8 @@ fn read_input() -> io::Result<()> {
 
     let mut uniquify_mapping = HashMap::new();
 
-    println!("{:?}", uniquify(&mut uniquify_mapping,
-                              get_ast(get_expr(&mut lexer))));
+    println!("{:?}", flatten(uniquify(&mut uniquify_mapping,
+                                      get_ast(get_expr(&mut lexer)))));
 
     Ok(())
 }
@@ -239,11 +256,11 @@ fn test_parser() {
 }
 
 
-static mut var_counter : i32 = 0;
+static mut VAR_COUNTER : i32 = 0;
 fn get_unique_varname(stem: &str) -> String {
     unsafe {
-        var_counter += 1;
-        return stem.to_string() + &"." + &var_counter.to_string();
+        VAR_COUNTER += 1;
+        return stem.to_string() + &"." + &VAR_COUNTER.to_string();
     }
 }    
 
@@ -288,6 +305,80 @@ fn uniquify(mapping: &mut HashMap<String, String>, expr: SExpr)
             return SExpr::App(f, new_args);
         },
         //_ => expr,
+    }
+}
+
+fn flatten(expr: SExpr) -> (Flat, Vec<Flat>, Vec<String>) {
+    match expr {
+        SExpr::Symbol(name) => (Flat::Symbol(name.clone()),
+                                vec![], 
+                                vec![name]),
+        SExpr::Number(n) => (Flat::Number(n), vec![], vec![]),
+        SExpr::Bool(b) => (Flat::Bool(b), vec![], vec![]),
+        SExpr::Let(bindings, body) => {
+            let (flat_body, body_assigns, body_vars) = flatten(*body);
+
+            let mut bindings_assigns = vec![];
+            let mut bindings_vars = vec![];
+            for (k, v) in bindings {
+                let (flat_v, v_assigns, v_vars) = flatten(v);
+                println!("{:?}", flat_v);
+                match flat_v.clone() {
+                    Flat::Symbol(name) => bindings_vars.push(name),
+                    _ => (),
+                };
+                bindings_assigns.extend_from_slice(&v_assigns);
+                bindings_assigns.extend_from_slice(
+                    &[Flat::Assign(k.clone(), Box::new(flat_v))]
+                    );
+                bindings_vars.extend_from_slice(&v_vars);
+                bindings_vars.push(k);
+            }
+            bindings_assigns.extend_from_slice(&body_assigns);
+            bindings_vars.extend_from_slice(&body_vars);
+            return (flat_body, 
+                    bindings_assigns, 
+                    bindings_vars);
+        },
+        SExpr::List(elts) => {
+            panic!("NYI");
+        },
+        SExpr::Define(name, val) => {
+            // TODO: FIXME
+            return (Flat::Symbol("".to_string()), vec![], vec![]);
+        },
+        SExpr::If(cnd, thn, els) => {
+            let (flat_cnd, mut cnd_assigns, mut cnd_vars) = 
+                flatten(*cnd);
+            let (flat_thn, mut thn_assigns, mut thn_vars) = 
+                flatten(*thn);
+            let (flat_els, mut els_assigns, mut els_vars) = 
+                flatten(*els);
+
+            let if_temp = get_unique_varname("if");
+
+            thn_assigns.extend_from_slice(&[Flat::Assign(if_temp.clone(),
+                                                         Box::new(flat_thn))]);
+            els_assigns.extend_from_slice(&[Flat::Assign(if_temp.clone(),
+                                                         Box::new(flat_els))]);
+            let flat_if = Flat::If(Box::new(Flat::EqP(Box::new(flat_cnd),
+                                                      Box::new(Flat::Bool(true)))),
+                                   thn_assigns,
+                                   els_assigns);
+
+            cnd_assigns.extend_from_slice(&[flat_if]);
+            cnd_vars.append(&mut thn_vars);
+            cnd_vars.append(&mut els_vars);
+            cnd_vars.extend_from_slice(&[if_temp.clone()]);
+            return (Flat::Symbol(if_temp),
+                    cnd_assigns,
+                    cnd_vars);
+                                   
+        },
+        SExpr::App(f, args) => {
+            panic!("NYI");
+        },
+        // _ => (SExpr::Symbol("".to_string()), vec![], vec![]),
     }
 }
 
