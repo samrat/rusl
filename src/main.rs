@@ -210,7 +210,14 @@ fn get_ast(expr: SExpr) -> SExpr {
                             }
                             return SExpr::Let(astified_bindings, Box::new(get_ast(elts[2].clone())));
                         },
-                        _ => SExpr::App(Box::new(elts[0].clone()), elts[1..].to_vec()),
+                        _ => {
+                            let mut astified_args = vec![];
+                            for arg in elts[1..].to_vec() {
+                                astified_args.push(get_ast(arg));
+                            }
+
+                            return SExpr::App(Box::new(elts[0].clone()), astified_args);
+                        },
                     }
                 }
                 _ => panic!("NYI"),
