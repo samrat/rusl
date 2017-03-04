@@ -31,20 +31,15 @@ enum SExpr {
 }
 
 #[derive(Clone, Debug)]
-enum Arg {
-    Number(i32),
-    Var(String),
-}
-
-#[derive(Clone, Debug)]
 enum Flat {
     Symbol(String),
     Number(i32),
     Bool(bool),
     Assign(String, Box<Flat>),
-    Return(Arg),
+    Return(Box<Flat>),
     If(Box<Flat>, Vec<Flat>, Vec<Flat>),
     EqP(Box<Flat>, Box<Flat>),
+    Prim(String, Vec<Flat>),
 }
 
 fn unread(ls: &mut LexerState, tok: Token) {
@@ -383,7 +378,44 @@ fn flatten(expr: SExpr) -> (Flat, Vec<Flat>, Vec<String>) {
                                    
         },
         SExpr::App(f, args) => {
-            panic!("NYI");
+            match *f {
+                SExpr::Symbol(fname) => {
+                    match &fname[..] {
+                        "-" => {
+                            // TODO: check no. of args
+                            let (flat_e, mut e_assigns, mut e_vars) = flatten(args[0].clone());
+                            let neg_temp = get_unique_varname("tmp");
+                            let flat_neg = Flat::Assign(neg_temp.clone(),
+                                                        Box::new(Flat::Prim("-".to_string(), vec![flat_e])));
+                            e_assigns.extend_from_slice(&[flat_neg]);
+                            e_vars.extend_from_slice(&[neg_temp.clone()]);
+                            return (Flat::Symbol(neg_temp),
+                                    e_assigns,
+                                    e_vars);
+                        },
+                        "+" => {
+                            let (flat_e1, mut e1_assigns, mut e1_vars) = flatten(args[0].clone());
+                            let (flat_e2, mut e2_assigns, mut e2_vars) = flatten(args[1].clone());
+
+                            let plus_temp = get_unique_varname("tmp");
+
+                            let flat_plus = Flat::Assign(plus_temp.clone(),
+                                                         Box::new(Flat::Prim("+".to_string(), vec![flat_e1, flat_e2])));
+                            e1_assigns.append(&mut e2_assigns);
+                            e1_assigns.extend_from_slice(&[flat_plus]);
+
+                            e1_vars.append(&mut e2_vars);
+                            e1_vars.extend_from_slice(&[plus_temp.clone()]);
+
+                            return (Flat::Symbol(plus_temp),
+                                    e1_assigns,
+                                    e1_vars);
+                        },
+                        &_ => panic!("NYI!"),
+                    }
+                },
+                _ => panic!("not a function!"),
+            }
         },
         // _ => (SExpr::Symbol("".to_string()), vec![], vec![]),
     }
