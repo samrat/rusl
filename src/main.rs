@@ -469,6 +469,42 @@ fn lower_conditionals(prog: X86) -> X86 {
     }
 }
 
+fn patch_single_instr(instr: X86) -> Vec<X86> {
+    match instr {
+        X86::Mov(X86Arg::RegOffset(Reg::RBP, dest), 
+                 X86Arg::RegOffset(Reg::RBP, src)) => {
+            vec![X86::Mov(X86Arg::Reg(Reg::RAX),
+                          X86Arg::RegOffset(Reg::RBP, src)),
+                 X86::Mov(X86Arg::RegOffset(Reg::RBP, dest), 
+                          X86Arg::Reg(Reg::RAX))]
+        },
+        X86::Add(X86Arg::RegOffset(Reg::RBP, dest), 
+                 X86Arg::RegOffset(Reg::RBP, src)) => {
+            vec![X86::Mov(X86Arg::Reg(Reg::RAX),
+                          X86Arg::RegOffset(Reg::RBP, dest)),
+                 X86::Add(X86Arg::Reg(Reg::RAX),
+                          X86Arg::RegOffset(Reg::RBP, src)),
+                 X86::Mov(X86Arg::RegOffset(Reg::RBP, dest),
+                          X86Arg::Reg(Reg::RAX))
+            ]
+        },
+        _ => vec![instr],
+    }
+}
+
+fn patch_instructions(prog: X86) -> X86 {
+    match prog {
+        X86::Prog(instrs, vars) => {
+            let mut patched_instrs = vec![];
+            for i in instrs {
+                patched_instrs.extend_from_slice(&patch_single_instr(i));
+            }
+            return X86::Prog(patched_instrs, vars);
+        },
+        _ => panic!("patch_instructions: not top-level Prog"),
+    }
+}
+
 
 fn read_input() -> io::Result<()> {
     let mut input = String::new();
@@ -487,7 +523,7 @@ fn read_input() -> io::Result<()> {
         flatten(uniquify(&mut uniquify_mapping,
                          SExpr::Prog(Box::new(read(&mut lexer)))));
 
-    println!("{:?}", lower_conditionals(assign_homes(select_instructions(flat_prog, prog_assigns, prog_vars))));
+    println!("{:?}", patch_instructions(lower_conditionals(assign_homes(select_instructions(flat_prog, prog_assigns, prog_vars)))));
 
     Ok(())
 }
