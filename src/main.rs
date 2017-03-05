@@ -28,6 +28,7 @@ enum SExpr {
     Let(Vec<(String, SExpr)>, Box<SExpr>),
     If(Box<SExpr>, Box<SExpr>, Box<SExpr>),
     App(Box<SExpr>, Vec<SExpr>),
+    Prog(Box<SExpr>),
 }
 
 #[derive(Clone, Debug)]
@@ -40,6 +41,29 @@ enum Flat {
     If(Box<Flat>, Vec<Flat>, Vec<Flat>),
     EqP(Box<Flat>, Box<Flat>),
     Prim(String, Vec<Flat>),
+}
+
+#[derive(Debug)]
+enum Reg {
+    RAX, RBX,
+}
+
+#[derive(Debug)]
+enum X86Arg {
+    Reg(Reg),
+    Imm(i32),
+    RegOffset(Reg, i32),
+    Var(String),     // pseudo-x86
+}
+
+#[derive(Debug)]
+enum X86 {
+    Mov(X86Arg, X86Arg),
+    Add(X86Arg, X86Arg),
+    Cmp(Box<X86>, Box<X86>),
+    EqP(X86Arg, X86Arg),          // pseudo-X86
+    If(Box<X86>, Vec<X86>, Vec<X86>), // pseudo-X86
+    Prog(Vec<X86>, Vec<String>),
 }
 
 fn unread(ls: &mut LexerState, tok: Token) {
@@ -221,25 +245,6 @@ fn get_ast(expr: SExpr) -> SExpr {
     }
 }
 
-fn read_input() -> io::Result<()> {
-    let mut input = String::new();
-
-    try!(io::stdin().read_line(&mut input));
-
-    let mut lexer = LexerState {
-        s: input,
-        pos: 0,
-        tok_buf: None,
-    };
-
-    let mut uniquify_mapping = HashMap::new();
-
-    println!("{:?}", flatten(uniquify(&mut uniquify_mapping,
-                                      get_ast(get_expr(&mut lexer)))));
-
-    Ok(())
-}
-
 #[test]
 fn test_parser() {
     let mut input = String::from("(if #f (+ 42 (foo 12)) 17)");
@@ -306,6 +311,8 @@ fn uniquify(mapping: &mut HashMap<String, String>, expr: SExpr)
             }
             return SExpr::App(f, new_args);
         },
+        SExpr::Prog(e) =>
+            return SExpr::Prog(Box::new(uniquify(mapping, *e))),
         //_ => expr,
     }
 }
@@ -417,8 +424,145 @@ fn flatten(expr: SExpr) -> (Flat, Vec<Flat>, Vec<String>) {
                 _ => panic!("not a function!"),
             }
         },
+        SExpr::Prog(e) => {
+            let (flat_e, mut e_assigns, mut e_vars) = flatten(*e);
+            let return_e = Flat::Return(Box::new(flat_e));
+
+            e_assigns.extend_from_slice(&[return_e]);
+            e_vars.dedup();
+
+            return (Flat::Symbol("<PROGRAM>".to_string()),
+                    e_assigns,
+                    e_vars);
+        },
         // _ => (SExpr::Symbol("".to_string()), vec![], vec![]),
     }
+}
+
+fn flat_arg_type(v: Flat) -> X86Arg {
+    match v {
+        Flat::Symbol(name) => X86Arg::Var(name),
+        Flat::Number(n) => X86Arg::Imm(n),
+        Flat::Bool(b) => {
+            match b {
+                true => X86Arg::Imm(1),
+                false => X86Arg::Imm(0),
+            }
+        },
+        _ => panic!("flat_arg_type: compound expression"),
+    }
+}
+
+fn flat_to_px86(instr: Flat) -> Vec<X86> {
+    match instr {
+        Flat::Assign(dest, e) => {
+            match *e {
+                Flat::Symbol(name) => vec![X86::Mov(X86Arg::Var(dest), X86Arg::Var(name))],
+                Flat::Number(n) => vec![X86::Mov(X86Arg::Var(dest), X86Arg::Imm(n))],
+                Flat::Bool(b) => {
+                    let bval = match b {
+                        true => 1,
+                        false => 0,
+                    };
+                    return vec![X86::Mov(X86Arg::Var(dest), 
+                                         X86Arg::Imm(bval))];
+                },
+                // https://github.com/rust-lang/rust/issues/16223
+                x => match x {
+                    Flat::Prim(f, args) => {
+                        match &f[..] {
+                            "+" => {
+                                // TODO: check arg count
+                                let arg1 = args[0].clone();
+                                let arg2 = args[1].clone();
+                                return vec![
+                                    X86::Mov(X86Arg::Var(dest.clone()),
+                                             flat_arg_type(arg1)),
+                                    X86::Add(X86Arg::Var(dest),
+                                             flat_arg_type(arg2))
+                                ];
+                            },
+                            _ => panic!("primitive not defined"),
+                        }
+                    },
+                    _ => {
+                        println!("{:?}", x);
+                        panic!("NYI")
+                    },
+                },
+            }
+        },
+        Flat::Return(v) => {
+            let val = flat_arg_type(*v);
+            return vec![X86::Mov(X86Arg::Reg(Reg::RAX), 
+                                 val)]
+        },
+        Flat::If(cnd, thn, els) => {
+            let (eq_left, eq_right) = match *cnd {
+                x => match x {
+                    Flat::EqP(left, right) => (left, right),
+                    _ => panic!("if cond needs to be Flat::EqP"),
+                },
+            };
+            let mut thn_instrs = vec![];
+            for i in thn {
+                let mut i_instrs = flat_to_px86(i);
+                thn_instrs.append(&mut i_instrs);
+            }
+            let mut els_instrs = vec![];
+            for i in els {
+                let mut i_instrs = flat_to_px86(i);
+                els_instrs.append(&mut i_instrs);
+            }
+            return vec![X86::If(Box::new(X86::EqP(flat_arg_type(*eq_left),
+                                                  flat_arg_type(*eq_right))),
+                                thn_instrs,
+                                els_instrs)];
+        },
+        _ => panic!("NYI"),
+    }
+}
+
+fn select_instructions(flat_prog: Flat, prog_assigns: Vec<Flat>, prog_vars: Vec<String>) -> X86 {
+    match flat_prog {
+        Flat::Symbol(flat) => {
+            match &flat[..] {
+                "<PROGRAM>" => {
+                    let mut x86_instrs = vec![];
+                    for i in prog_assigns {
+                        let mut i_instrs = flat_to_px86(i);
+                        x86_instrs.append(&mut i_instrs);
+                    }
+                    return X86::Prog(x86_instrs, prog_vars);
+                },
+                &_ => panic!("arg passed to select_instructions is not top-level prog"),
+            }
+        },
+        _ => panic!("flat_prog is not a symbol"),
+    }
+}
+
+
+fn read_input() -> io::Result<()> {
+    let mut input = String::new();
+
+    try!(io::stdin().read_line(&mut input));
+
+    let mut lexer = LexerState {
+        s: input,
+        pos: 0,
+        tok_buf: None,
+    };
+
+    let mut uniquify_mapping = HashMap::new();
+
+    let (flat_prog, prog_assigns, prog_vars) =
+        flatten(uniquify(&mut uniquify_mapping,
+                         SExpr::Prog(Box::new(get_ast(get_expr(&mut lexer))))));
+
+    println!("{:?}", select_instructions(flat_prog, prog_assigns, prog_vars));
+
+    Ok(())
 }
 
 fn main() {
