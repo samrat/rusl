@@ -24,6 +24,11 @@ enum Flat {
 }
 
 #[derive(Debug, Clone)]
+enum CC {
+    E, L, LE, G, GE,
+}
+
+#[derive(Debug, Clone)]
 enum Reg {
     RAX, RBX, RBP
 }
@@ -31,19 +36,23 @@ enum Reg {
 #[derive(Debug, Clone)]
 enum X86Arg {
     Reg(Reg),
+    CC(CC),
     Imm(i32),
     RegOffset(Reg, i32),
     Var(String),     // pseudo-x86
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum X86 {
     Mov(X86Arg, X86Arg),
     Add(X86Arg, X86Arg),
-    Cmp(Box<X86>, Box<X86>),
+    Cmp(X86Arg, X86Arg),
     EqP(X86Arg, X86Arg),          // pseudo-X86
     If(Box<X86>, Vec<X86>, Vec<X86>), // pseudo-X86
     Prog(Vec<X86>, Vec<String>),
+    JmpIf(CC, String),
+    Jmp(String),
+    Label(String),
 }
 
 
@@ -53,7 +62,7 @@ static mut VAR_COUNTER : i32 = 0;
 fn get_unique_varname(stem: &str) -> String {
     unsafe {
         VAR_COUNTER += 1;
-        return stem.to_string() + &"." + &VAR_COUNTER.to_string();
+        return stem.to_string() + &VAR_COUNTER.to_string();
     }
 }    
 
@@ -405,6 +414,61 @@ fn assign_homes(prog: X86) -> X86 {
     }
 }
 
+fn lower_if (instr: X86) -> Vec<X86> {
+    match instr {
+        X86::If(cnd, thn, els) => {
+            let (eqp_left, eqp_right) = match *cnd {
+                x => match x {
+                    X86::EqP(left, right) => (left, right),
+                    _ => panic!("if cond is always EqP"),
+                },
+            };
+            let thn_label = get_unique_varname("then");
+            let end_label = get_unique_varname("endif");
+
+            let mut new_elss = vec![];
+            for i in els {
+                new_elss.extend_from_slice(&lower_if(i));
+            }
+            let mut new_thns = vec![];
+            for i in thn {
+                new_thns.extend_from_slice(&lower_if(i));
+            }
+
+            let mut if_instrs = vec![
+                X86::Cmp(eqp_right, eqp_left),
+                X86::JmpIf(CC::E, thn_label.clone()),
+            ];
+            if_instrs.append(&mut new_elss);
+            if_instrs.extend_from_slice(&[
+                X86::Jmp(end_label.clone()),
+                X86::Label(thn_label),
+            ]);
+            if_instrs.append(&mut new_thns);
+            if_instrs.extend_from_slice(&[
+                X86::Label(end_label),
+            ]);
+
+            return if_instrs;
+        },
+        _ => vec![instr],
+    }
+}
+
+fn lower_conditionals(prog: X86) -> X86 {
+    match prog {
+        X86::Prog(instrs, vars) => {
+            let mut new_instrs = vec![];
+            for i in instrs {
+                new_instrs.extend_from_slice(&lower_if(i));
+            }
+
+            return X86::Prog(new_instrs, vars);
+        }
+        _ => panic!("lower_conditionals: not top-level Prog"),
+    }
+}
+
 
 fn read_input() -> io::Result<()> {
     let mut input = String::new();
@@ -423,7 +487,7 @@ fn read_input() -> io::Result<()> {
         flatten(uniquify(&mut uniquify_mapping,
                          SExpr::Prog(Box::new(read(&mut lexer)))));
 
-    println!("{:?}", assign_homes(select_instructions(flat_prog, prog_assigns, prog_vars)));
+    println!("{:?}", lower_conditionals(assign_homes(select_instructions(flat_prog, prog_assigns, prog_vars))));
 
     Ok(())
 }
