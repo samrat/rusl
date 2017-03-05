@@ -36,7 +36,6 @@ enum Reg {
 #[derive(Debug, Clone)]
 enum X86Arg {
     Reg(Reg),
-    CC(CC),
     Imm(i32),
     RegOffset(Reg, i32),
     Var(String),     // pseudo-x86
@@ -506,6 +505,90 @@ fn patch_instructions(prog: X86) -> X86 {
 }
 
 
+fn display_reg(reg: Reg) -> String {
+    match reg {
+        Reg::RAX => "rax",
+        Reg::RBX => "rbx",
+        Reg::RBP => "rbp",
+    }.to_string()
+}
+
+fn print_x86_arg(arg: X86Arg) -> String {
+    match arg {
+        X86Arg::Reg(r) => format!("{}", display_reg(r)),
+        X86Arg::Imm(n) => format!("{}", n),
+        X86Arg::RegOffset(r, offset) => format!("QWORD [{}{}]", 
+                                                display_reg(r), offset),
+        _ => panic!("invalid arg type"),
+    }
+}
+
+fn print_CC(cc: CC) -> String {
+    match cc {
+        CC::E => "e", 
+        CC::L => "l", 
+        CC::LE => "le", 
+        CC::G => "g", 
+        CC::GE => "ge",
+    }.to_string()
+}
+
+fn print_instr(instr: X86) -> String {
+    let instr_string = match instr.clone() {
+        X86::Mov(dest, src) => format!("mov {}, {}", 
+                                       print_x86_arg(dest), 
+                                       print_x86_arg(src)),
+        X86::Add(dest, src) => format!("add {}, {}", 
+                                       print_x86_arg(dest), 
+                                       print_x86_arg(src)),
+        X86::Cmp(left, right) => format!("cmp {}, {}",
+                                        print_x86_arg(left), 
+                                        print_x86_arg(right)),
+        X86::JmpIf(cc, label) => format!("j{} {}",
+                                         print_CC(cc),
+                                         label),
+        X86::Jmp(label) => format!("jmp {}", label),
+        X86::Label(label) => format!("{}:", label),
+
+        _ => panic!("invalid op"),
+    };
+
+    match instr {
+        X86::Label(_) => return format!("{}\n", instr_string),
+        _ => return format!("    {}\n", instr_string),
+    }
+}
+
+fn print_x86(prog: X86) -> String {
+    let prelude = "section .text
+extern print_int
+global main
+main:
+    push rbp
+    mov rbp, rsp\n";
+    // TODO: save/restore registers
+    let postlude = "    mov rdi, rax
+    call print_int
+
+    mov rsp, rbp
+    pop rbp
+    ret\n";
+    let mut instrs_str = match prog {
+        X86::Prog(instrs, vars) => {
+            let mut instrs_str = String::from(prelude);
+            for i in instrs {
+                instrs_str.push_str(&print_instr(i));
+            }
+            instrs_str
+        },
+        _ => panic!("print_x86: not top-level Prog"),
+    };
+
+    instrs_str.push_str(postlude);
+    return instrs_str;
+}
+
+
 fn read_input() -> io::Result<()> {
     let mut input = String::new();
 
@@ -523,7 +606,7 @@ fn read_input() -> io::Result<()> {
         flatten(uniquify(&mut uniquify_mapping,
                          SExpr::Prog(Box::new(read(&mut lexer)))));
 
-    println!("{:?}", patch_instructions(lower_conditionals(assign_homes(select_instructions(flat_prog, prog_assigns, prog_vars)))));
+    println!("{}", print_x86(patch_instructions(lower_conditionals(assign_homes(select_instructions(flat_prog, prog_assigns, prog_vars))))));
 
     Ok(())
 }
