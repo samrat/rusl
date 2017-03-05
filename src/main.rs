@@ -11,7 +11,7 @@ use parser::SExpr;
 use parser::read;
 
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 enum Flat {
     Symbol(String),
     Number(i32),
@@ -25,6 +25,7 @@ enum Flat {
 
 #[derive(Debug, Clone)]
 enum CC {
+    // condition codes
     E, L, LE, G, GE,
 }
 
@@ -55,8 +56,6 @@ enum X86 {
 }
 
 
-
-
 static mut VAR_COUNTER : i32 = 0;
 fn get_unique_varname(stem: &str) -> String {
     unsafe {
@@ -65,6 +64,8 @@ fn get_unique_varname(stem: &str) -> String {
     }
 }    
 
+// uniquify variable names. This function simply adds a monotonically
+// increasing counter(VAR_COUNTER) to each and every variable.
 fn uniquify(mapping: &mut HashMap<String, String>, expr: SExpr) 
             -> SExpr {
     match expr {
@@ -111,6 +112,9 @@ fn uniquify(mapping: &mut HashMap<String, String>, expr: SExpr)
     }
 }
 
+
+// This function does and ANF transformation. The output is a Flat
+// expression.
 fn flatten(expr: SExpr) -> (Flat, Vec<Flat>, Vec<String>) {
     match expr {
         SExpr::Symbol(name) => (Flat::Symbol(name.clone()),
@@ -233,6 +237,25 @@ fn flatten(expr: SExpr) -> (Flat, Vec<Flat>, Vec<String>) {
     }
 }
 
+#[test]
+fn test_flatten() {
+    let mut input = String::from("(+ 12 (+ 13 14))");
+    let mut lexer = LexerState {
+        s: input,
+        pos: 0,
+        tok_buf: None,
+    };
+
+    assert_eq!(
+        flatten(SExpr::Prog(Box::new(read(&mut lexer)))),
+        (Flat::Symbol("<PROGRAM>".to_string()), 
+         vec![Flat::Assign("tmp1".to_string(), Box::new(Flat::Prim("+".to_string(), vec![Flat::Number(13), Flat::Number(14)]))), 
+              Flat::Assign("tmp2".to_string(), Box::new(Flat::Prim("+".to_string(), vec![Flat::Number(12), Flat::Symbol("tmp1".to_string())]))),
+              Flat::Return(Box::new(Flat::Symbol("tmp2".to_string())))
+         ], vec!["tmp1".to_string(), "tmp2".to_string()])
+    );
+}
+
 fn flat_arg_type(v: Flat) -> X86Arg {
     match v {
         Flat::Symbol(name) => X86Arg::Var(name),
@@ -247,6 +270,7 @@ fn flat_arg_type(v: Flat) -> X86Arg {
     }
 }
 
+// convert one Flat instruction to pseudo-x86
 fn flat_to_px86(instr: Flat) -> Vec<X86> {
     match instr {
         Flat::Assign(dest, e) => {
@@ -317,6 +341,9 @@ fn flat_to_px86(instr: Flat) -> Vec<X86> {
     }
 }
 
+// convert a Flat expression into pseudo-x86 instructions. pseudo-x86
+// is like x86 but with if's and temporaries. It is also
+// "unpatched" (see `patch_instructions`)
 fn select_instructions(flat_prog: Flat, prog_assigns: Vec<Flat>, prog_vars: Vec<String>) -> X86 {
     match flat_prog {
         Flat::Symbol(flat) => {
