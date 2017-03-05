@@ -1,20 +1,12 @@
 use std::io;
 use std::collections::HashMap;
 
-#[derive(Debug, PartialEq, Clone)]
-enum Token {
-    LParen,
-    RParen,
-    Symbol(String),
-    Number(i32),
-    EOF,
-}
+mod lexer;
 
-pub struct LexerState {
-    s: String,
-    pos: usize,
-    tok_buf: Option<Token>,
-}
+use lexer::Token;
+use lexer::LexerState;
+use lexer::get_token;
+
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 enum SExpr {
@@ -75,83 +67,7 @@ fn unread(ls: &mut LexerState, tok: Token) {
     }
 }
 
-fn is_valid_symbol_start(c: char) -> bool {
-    // TODO: avoid allocatiing this in each call
-    let symbol_start_chars = vec!['+', '-', '*', '/', '#'];
 
-    let mut ret = false;
-    if c.is_alphabetic() { ret = true; }
-    else {
-        for s in symbol_start_chars {
-            if c == s { ret = true; break; }
-            else { continue; }
-        }
-    }
-
-    return ret;
-}
-
-fn get_token(ls: &mut LexerState) -> Token {
-    if let Some(tok) = ls.tok_buf.clone() {
-        ls.tok_buf = None;
-        return tok;
-    }
-    else {
-        let mut iter = ls.s[ls.pos..].chars().peekable();
-        while let Some(&c) = iter.peek() {
-            if c.is_numeric() {
-                let mut acc = String::new();
-                let mut n = c;
-                while n.is_numeric() {
-                    acc.push(n);
-                    iter.next();
-                    ls.pos += 1;
-                    n = match iter.peek() {
-                        Some(&x) => x,
-                        None => break,
-                    };
-                }
-                return Token::Number(acc.parse().unwrap());
-            }
-            else if is_valid_symbol_start(c) {
-                let mut acc = String::new();
-                let mut s = c;
-                while (s.is_alphanumeric() || 
-                       is_valid_symbol_start(s)) {
-                    acc.push(s);
-                    iter.next();
-                    ls.pos += 1;
-                    s = match iter.peek() {
-                        Some(&x) => x,
-                        None => break,
-                    };
-                }
-                return Token::Symbol(acc);
-            }
-            else {
-                match c {
-                    ' ' => {
-                        iter.next();
-                        ls.pos += 1;
-                        continue
-                    },
-                    '(' => {
-                        iter.next();
-                        ls.pos += 1;
-                        return Token::LParen
-                    },
-                    ')' => {
-                        iter.next();
-                        ls.pos += 1;
-                        return Token::RParen
-                    },
-                    _ => panic!("unexpected char: {}", c),
-                }
-            }
-        }
-        return Token::EOF;
-    }
-}
 
 fn get_list(ls: &mut LexerState) -> Vec<SExpr> {
     match get_expr(ls) {
