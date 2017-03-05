@@ -8,8 +8,7 @@ use lexer::Token;
 use lexer::LexerState;
 
 use parser::SExpr;
-use parser::get_expr;
-use parser::get_ast;
+use parser::read;
 
 
 #[derive(Clone, Debug)]
@@ -345,7 +344,7 @@ fn read_input() -> io::Result<()> {
 
     let (flat_prog, prog_assigns, prog_vars) =
         flatten(uniquify(&mut uniquify_mapping,
-                         SExpr::Prog(Box::new(get_ast(get_expr(&mut lexer))))));
+                         SExpr::Prog(Box::new(read(&mut lexer)))));
 
     println!("{:?}", select_instructions(flat_prog, prog_assigns, prog_vars));
 

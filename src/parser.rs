@@ -121,6 +121,10 @@ pub fn get_ast(expr: SExpr) -> SExpr {
     }
 }
 
+pub fn read(ls: &mut LexerState) -> SExpr {
+    return get_ast(get_expr(ls));
+}
+
 #[test]
 fn test_parser() {
     let mut input = String::from("(if #f (+ 42 (foo 12)) 17)");
@@ -132,8 +136,8 @@ fn test_parser() {
     assert_eq!(SExpr::If(Box::new(SExpr::Bool(false)),
                          Box::new(SExpr::App(Box::new(SExpr::Symbol("+".to_string())),
                                              vec![SExpr::Number(42),
-                                                  SExpr::List(vec![SExpr::Symbol("foo".to_string()),
-                                                                   SExpr::Number(12)])])),
+                                                  SExpr::App(Box::new(SExpr::Symbol("foo".to_string())),
+                                                             vec![SExpr::Number(12)])])),
                          Box::new(SExpr::Number(17))),
-               get_ast(get_expr(&mut lexer)));
+               read(&mut lexer));
 }
