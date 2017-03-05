@@ -23,12 +23,12 @@ enum Flat {
     Prim(String, Vec<Flat>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum Reg {
-    RAX, RBX,
+    RAX, RBX, RBP
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum X86Arg {
     Reg(Reg),
     Imm(i32),
@@ -328,6 +328,83 @@ fn select_instructions(flat_prog: Flat, prog_assigns: Vec<Flat>, prog_vars: Vec<
     }
 }
 
+fn assign_homes_to_op2(locs: &HashMap<String, i32>, 
+                       src: X86Arg, dest: X86Arg) -> (X86Arg, X86Arg) {
+    match (dest.clone(), src.clone()) {
+        (X86Arg::Var(d), X86Arg::Var(s)) =>
+            (X86Arg::RegOffset(Reg::RBP, 
+                               locs.get(&d).unwrap().clone()),
+             X86Arg::RegOffset(Reg::RBP, 
+                               locs.get(&s).unwrap().clone())),
+        (X86Arg::Var(d), _) =>
+            (X86Arg::RegOffset(Reg::RBP, 
+                               locs.get(&d).unwrap().clone()),
+             src) ,
+        (_, X86Arg::Var(s)) =>
+            (dest,
+             X86Arg::RegOffset(Reg::RBP, 
+                               locs.get(&s).unwrap().clone())) ,
+        (X86Arg::Reg(reg), _) =>
+            (dest, src) ,
+        _ => panic!("unreachable"),
+    }
+}
+
+fn assign_homes_to_instrs(instrs: Vec<X86>, locs: HashMap<String, i32>) -> Vec<X86> {
+    let mut new_instrs = vec![];
+    for i in instrs {
+        match i {
+            X86::If(cnd, thn, els) => {
+                let new_cnd = match *cnd {
+                    x => match x {
+                        X86::EqP(left, right) => {
+                        let new_left = match left {
+                            X86Arg::Var(v) => 
+                                X86Arg::RegOffset(Reg::RBP, 
+                                                  locs.get(&v).unwrap().clone()),
+                            _ => left,
+                        };
+                        X86::EqP(new_left, right)
+                        },
+                        _ => panic!("if cond should be an EqP"),
+                    },
+                };
+                let new_thn = assign_homes_to_instrs(thn, locs.clone());
+                let new_els = assign_homes_to_instrs(els, locs.clone());
+                new_instrs.push(
+                    X86::If(Box::new(new_cnd), new_thn, new_els)
+                );
+            },
+            X86::Mov(dest, src) => {
+                let (new_dest, new_src) = assign_homes_to_op2(&locs, src, dest);
+                new_instrs.push(X86::Mov(new_dest, new_src))
+            },
+            X86::Add(dest, src) => {
+                let (new_dest, new_src) = assign_homes_to_op2(&locs, src, dest);
+                new_instrs.push(X86::Add(new_dest, new_src))
+            },
+            _ => panic!("NYI"),
+        }
+    };
+    
+    return new_instrs;
+}
+
+fn assign_homes(prog: X86) -> X86 {
+    match prog {
+        X86::Prog(instrs, vars) => {
+            let mut locs = HashMap::new();
+            let mut stack_size = 0;
+            for var in vars.clone() {
+                stack_size += 1;
+                locs.insert(var, stack_size * -8);
+            };
+            return X86::Prog(assign_homes_to_instrs(instrs, locs), vars);
+        },
+        _ => panic!("assign_homes: not top level prog"),
+    }
+}
+
 
 fn read_input() -> io::Result<()> {
     let mut input = String::new();
@@ -346,7 +423,7 @@ fn read_input() -> io::Result<()> {
         flatten(uniquify(&mut uniquify_mapping,
                          SExpr::Prog(Box::new(read(&mut lexer)))));
 
-    println!("{:?}", select_instructions(flat_prog, prog_assigns, prog_vars));
+    println!("{:?}", assign_homes(select_instructions(flat_prog, prog_assigns, prog_vars)));
 
     Ok(())
 }
