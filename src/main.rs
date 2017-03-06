@@ -2,6 +2,7 @@ use std::io;
 use std::collections::HashMap;
 use std::io::prelude::*;
 use std::fs::File;
+use std::env;
 
 mod util;
 mod lexer;
@@ -466,10 +467,12 @@ main:
 
 
 fn read_input() -> io::Result<()> {
-    let mut filename = String::new();
+    let args : Vec<_> = env::args().collect();
+    if args.len() < 2 {
+        panic!("usage: {} filename", args[0].clone());
+    }
 
-    try!(io::stdin().read_line(&mut filename));
-    let mut f = try!(File::open(&filename.trim()));
+    let mut f = try!(File::open(args[1].clone()));
     let mut input = String::new();
     try!(f.read_to_string(&mut input));
 
