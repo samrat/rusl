@@ -10,6 +10,8 @@ pub enum Token {
 pub struct LexerState {
     pub s: String,
     pub pos: usize,
+    pub col: usize,
+    pub line_num: usize,
     pub tok_buf: Option<Token>,
 }
 
@@ -44,6 +46,7 @@ pub fn get_token(ls: &mut LexerState) -> Token {
                     acc.push(n);
                     iter.next();
                     ls.pos += 1;
+                    ls.col += 1;
                     n = match iter.peek() {
                         Some(&x) => x,
                         None => break,
@@ -59,6 +62,7 @@ pub fn get_token(ls: &mut LexerState) -> Token {
                     acc.push(s);
                     iter.next();
                     ls.pos += 1;
+                    ls.col += 1;
                     s = match iter.peek() {
                         Some(&x) => x,
                         None => break,
@@ -68,22 +72,32 @@ pub fn get_token(ls: &mut LexerState) -> Token {
             }
             else {
                 match c {
+                    '\n' => {
+                        iter.next();
+                        ls.pos += 1;
+                        ls.col = 0;
+                        ls.line_num += 1;
+                        continue;
+                    },
                     ' ' => {
                         iter.next();
                         ls.pos += 1;
+                        ls.col += 1;
                         continue
                     },
                     '(' => {
                         iter.next();
                         ls.pos += 1;
+                        ls.col += 1;
                         return Token::LParen
                     },
                     ')' => {
                         iter.next();
                         ls.pos += 1;
+                        ls.col += 1;
                         return Token::RParen
                     },
-                    _ => panic!("unexpected char: {}", c),
+                    _ => panic!("line {}:{} unexpected char: {}", ls.line_num, ls.col, c),
                 }
             }
         }

@@ -1,5 +1,7 @@
 use std::io;
 use std::collections::HashMap;
+use std::io::prelude::*;
+use std::fs::File;
 
 mod util;
 mod lexer;
@@ -464,13 +466,18 @@ main:
 
 
 fn read_input() -> io::Result<()> {
-    let mut input = String::new();
+    let mut filename = String::new();
 
-    try!(io::stdin().read_line(&mut input));
+    try!(io::stdin().read_line(&mut filename));
+    let mut f = try!(File::open(&filename.trim()));
+    let mut input = String::new();
+    try!(f.read_to_string(&mut input));
 
     let mut lexer = LexerState {
         s: input,
-        pos: 0,
+        pos: 0,                 // absolute position
+        col: 1,                 // column in line
+        line_num: 1,
         tok_buf: None,
     };
 
