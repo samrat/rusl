@@ -99,7 +99,7 @@ fn uniquify(mapping: &mut HashMap<String, String>, expr: SExpr)
         },
         SExpr::Prog(e) =>
             return SExpr::Prog(Box::new(uniquify(mapping, *e))),
-        //_ => expr,
+        SExpr::EOF => panic!("Don't know what to do with EOF"),
     }
 }
 

@@ -15,6 +15,7 @@ pub enum SExpr {
     If(Box<SExpr>, Box<SExpr>, Box<SExpr>),
     App(Box<SExpr>, Vec<SExpr>),
     Prog(Box<SExpr>),
+    EOF,
 }
 
 
@@ -50,8 +51,9 @@ pub fn get_expr(ls: &mut LexerState) -> SExpr {
         Token::LParen => {
             return SExpr::List(get_list(ls));
         },
+        // TODO: show line num/column
         Token::RParen => panic!("unmatched ')'"),
-        _ => return SExpr::Number(32),
+        Token::EOF => return SExpr::EOF,
     }
 }
 
@@ -127,10 +129,13 @@ pub fn read(ls: &mut LexerState) -> SExpr {
 
 #[test]
 fn test_parser() {
-    let mut input = String::from("(if #f (+ 42 (foo 12)) 17)");
+    let mut input = String::from("(if #f (+ 42 (foo 12)) 17) 
+                                  (+ 1 2)");
     let mut lexer = LexerState {
         s: input,
         pos: 0,
+        col: 1,
+        line_num: 1,
         tok_buf: None,
     };
     assert_eq!(SExpr::If(Box::new(SExpr::Bool(false)),
@@ -140,4 +145,12 @@ fn test_parser() {
                                                              vec![SExpr::Number(12)])])),
                          Box::new(SExpr::Number(17))),
                read(&mut lexer));
+
+    // Second top-level s-expression
+    assert_eq!(SExpr::App(Box::new(SExpr::Symbol("+".to_string())),
+                          vec![SExpr::Number(1), 
+                               SExpr::Number(2)]),
+               read(&mut lexer));
+    // nothing left in string
+    assert_eq!(SExpr::EOF, read(&mut lexer));
 }

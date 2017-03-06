@@ -134,7 +134,7 @@ pub fn flatten(expr: SExpr) -> (Flat, Vec<Flat>, Vec<String>) {
                     e_assigns,
                     e_vars);
         },
-        // _ => (SExpr::Symbol("".to_string()), vec![], vec![]),
+        SExpr::EOF => panic!("Don't know what to do with EOF"),
     }
 }
 
@@ -147,6 +147,8 @@ fn test_flatten() {
     let mut lexer = LexerState {
         s: input,
         pos: 0,
+        col: 1,
+        line_num: 1,
         tok_buf: None,
     };
 
