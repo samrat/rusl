@@ -48,6 +48,14 @@ enum X86 {
     Cmp(X86Arg, X86Arg),
     EqP(X86Arg, X86Arg),          // pseudo-X86
     If(Box<X86>, Vec<X86>, Vec<X86>), // pseudo-X86
+
+    // pseudo-X86
+    IfWithLives(Box<X86>,                      // cond
+                Vec<X86>,                      // then
+                Vec<HashSet<String>>,          // then-live-sets
+                Vec<X86>,                      // else
+                Vec<HashSet<String>>           // else-live-sets
+    ),
     Prog(Vec<X86>, Vec<String>),
     JmpIf(CC, String),
     Jmp(String),
@@ -264,7 +272,8 @@ fn instruction_rw(instr: X86) -> (Vec<String>, Vec<String>, Vec<String>) {
     }
 }
 
-fn live_after_sets(mut instrs: Vec<X86>) -> (Vec<HashSet<String>>, Vec<X86>) {
+fn get_live_after_sets(mut instrs: Vec<X86>, lives: HashSet<String>) 
+                   -> (HashSet<String>, Vec<HashSet<String>>, Vec<X86>) {
     let mut live_of_next = HashSet::new();
     let mut live_after_sets = vec![];
     let mut new_instrs = vec![];
@@ -272,21 +281,46 @@ fn live_after_sets(mut instrs: Vec<X86>) -> (Vec<HashSet<String>>, Vec<X86>) {
     instrs.reverse();
     for instr in instrs {
         match instr {
-            X86::If(_, _, _) => panic!("NYI"),
+            X86::If(cnd, thns, elss) => {
+                let (thn_lives, thn_live_sets, _) =
+                    get_live_after_sets(thns.clone(), lives.clone());
+                let (els_lives, els_live_sets, _) =
+                    get_live_after_sets(elss.clone(), lives.clone());
+                let cond_vars = match *cnd.clone() {
+                    x => match x {
+                        X86::EqP(left, right) => {
+                            match (left, right) {
+                                (X86Arg::Var(l), X86Arg::Var(r)) => vec![l, r],
+                                (X86Arg::Var(l), _) => vec![l],
+                                (_, X86Arg::Var(r)) => vec![r],
+                                _ => vec![],
+                            }
+                        },
+                        _ => panic!("if cond needs to be EqP"),
+                    }
+                };
+
+                let mut live = live_of_next.clone();
+                live = live.union(&lives).cloned().collect();
+                live = live.union(&thn_lives).cloned().collect();
+                live = live.union(&els_lives).cloned().collect();
+
+                live_of_next = live.clone();
+                live_after_sets.push(live);
+
+                new_instrs.push(X86::IfWithLives(cnd, thns, thn_live_sets, elss, els_live_sets));
+            },
 
             _ => {
                 let (all_vars, read_vars, written_vars) =
                     instruction_rw(instr.clone());
-                println!("{:?}", (all_vars.clone(), read_vars.clone(), written_vars.clone()));
                 let mut live = live_of_next.clone();
-                println!("{:?}", live);
                 for w in written_vars {
                     live.remove(&w);
                 }
 
                 let read_vars_set : HashSet<_> = read_vars.iter().cloned().collect();
                 live = live.union(&read_vars_set).cloned().collect();
-                println!("{:?} {:?}", read_vars_set.clone(), live);
                 
                 live_of_next = live.clone();
                 live_after_sets.push(live);
@@ -297,7 +331,7 @@ fn live_after_sets(mut instrs: Vec<X86>) -> (Vec<HashSet<String>>, Vec<X86>) {
 
     live_after_sets.reverse();
     new_instrs.reverse();
-    return (live_after_sets, new_instrs);
+    return (live_of_next, live_after_sets, new_instrs);
 }
 
 fn assign_homes_to_op2(locs: &HashMap<String, i32>, 
@@ -581,7 +615,7 @@ fn read_input() -> io::Result<()> {
 
     match instrs.clone() {
         X86::Prog(instrs, _) => 
-            println!("{:?}", live_after_sets(instrs)),
+            println!("{:?}", get_live_after_sets(instrs, HashSet::new())),
         _ => panic!("Don't care"),
     }
 
