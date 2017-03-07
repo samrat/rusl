@@ -1,5 +1,6 @@
 use std::io;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::io::prelude::*;
 use std::fs::File;
 use std::env;
@@ -69,9 +70,11 @@ fn uniquify(mapping: &mut HashMap<String, String>, expr: SExpr)
             for (k,v) in bindings {
                 let uniq_k = get_unique_varname(&k);
                 mapping.insert(k.clone(), uniq_k.clone());
-                new_bindings.push((uniq_k, v));
+                new_bindings.push((uniq_k,
+                                   uniquify(mapping, v)));
             }
-            return SExpr::Let(new_bindings, Box::new(uniquify(mapping, *body)));
+            return SExpr::Let(new_bindings, 
+                              Box::new(uniquify(mapping, *body)));
         },
         SExpr::List(elts) => {
             let mut new_elts = vec![];
@@ -211,6 +214,90 @@ fn select_instructions(flat_prog: Flat, prog_assigns: Vec<Flat>, prog_vars: Vec<
         },
         _ => panic!("flat_prog is not a symbol"),
     }
+}
+
+// For an instruction, returns a 3-tuple:
+// (variables used in instruction, variables read, variables written to)
+fn instruction_rw(instr: X86) -> (Vec<String>, Vec<String>, Vec<String>) {
+    match instr {
+        X86::Mov(X86Arg::Var(dest), X86Arg::Var(src)) => {
+            return (vec![dest.clone(), src.clone()],
+                    vec![src],
+                    vec![dest]);
+        },
+        X86::Mov(X86Arg::Var(dest), _) => {
+            return (vec![dest.clone()],
+                    vec![],
+                    vec![dest]);
+        },
+        X86::Mov(X86Arg::Reg(Reg::RAX), X86Arg::Var(src)) => {
+            return (vec![src.clone()],
+                    vec![src],
+                    vec![])
+        },
+        X86::Cmp(left, right) => {
+            match (left, right) {
+                (X86Arg::Var(l), X86Arg::Var(r)) => (vec![l.clone(),
+                                                          r.clone()],
+                                                     vec![l, r],
+                                                     vec![]),
+                (X86Arg::Var(l), _) => (vec![l.clone()],
+                                        vec![l],
+                                        vec![]),
+                (_, X86Arg::Var(r)) => (vec![r.clone()],
+                                        vec![r],
+                                        vec![]),
+                (_, _) => (vec![], vec![], vec![]),
+            }
+        },
+        X86::Add(X86Arg::Var(dest), X86Arg::Var(src)) => {
+            return (vec![dest.clone(), src.clone()],
+                    vec![dest.clone(), src],
+                    vec![dest]);
+        },
+        X86::Add(X86Arg::Var(dest), _) => {
+            return (vec![dest.clone()],
+                    vec![dest.clone()],
+                    vec![dest]);
+        },
+        _ => panic!("NYI: {:?}", instr),
+    }
+}
+
+fn live_after_sets(mut instrs: Vec<X86>) -> (Vec<HashSet<String>>, Vec<X86>) {
+    let mut live_of_next = HashSet::new();
+    let mut live_after_sets = vec![];
+    let mut new_instrs = vec![];
+    
+    instrs.reverse();
+    for instr in instrs {
+        match instr {
+            X86::If(_, _, _) => panic!("NYI"),
+
+            _ => {
+                let (all_vars, read_vars, written_vars) =
+                    instruction_rw(instr.clone());
+                println!("{:?}", (all_vars.clone(), read_vars.clone(), written_vars.clone()));
+                let mut live = live_of_next.clone();
+                println!("{:?}", live);
+                for w in written_vars {
+                    live.remove(&w);
+                }
+
+                let read_vars_set : HashSet<_> = read_vars.iter().cloned().collect();
+                live = live.union(&read_vars_set).cloned().collect();
+                println!("{:?} {:?}", read_vars_set.clone(), live);
+                
+                live_of_next = live.clone();
+                live_after_sets.push(live);
+                new_instrs.push(instr);
+            },
+        }
+    };
+
+    live_after_sets.reverse();
+    new_instrs.reverse();
+    return (live_after_sets, new_instrs);
 }
 
 fn assign_homes_to_op2(locs: &HashMap<String, i32>, 
@@ -486,11 +573,19 @@ fn read_input() -> io::Result<()> {
 
     let mut uniquify_mapping = HashMap::new();
 
+    let uniquified = uniquify(&mut uniquify_mapping,
+                              SExpr::Prog(Box::new(read(&mut lexer))));
     let (flat_prog, prog_assigns, prog_vars) =
-        flatten(uniquify(&mut uniquify_mapping,
-                         SExpr::Prog(Box::new(read(&mut lexer)))));
+        flatten(uniquified);
+    let instrs = select_instructions(flat_prog, prog_assigns, prog_vars);
 
-    println!("{}", print_x86(patch_instructions(lower_conditionals(assign_homes(select_instructions(flat_prog, prog_assigns, prog_vars))))));
+    match instrs.clone() {
+        X86::Prog(instrs, _) => 
+            println!("{:?}", live_after_sets(instrs)),
+        _ => panic!("Don't care"),
+    }
+
+    println!("{}", print_x86(patch_instructions(lower_conditionals(assign_homes(instrs)))));
 
     Ok(())
 }
