@@ -30,7 +30,6 @@ pub fn flatten(expr: SExpr) -> (Flat, Vec<Flat>, Vec<String>) {
             let mut bindings_vars = vec![];
             for (k, v) in bindings {
                 let (flat_v, v_assigns, v_vars) = flatten(v);
-                println!("{:?}", flat_v);
                 match flat_v.clone() {
                     Flat::Symbol(name) => bindings_vars.push(name),
                     _ => (),
