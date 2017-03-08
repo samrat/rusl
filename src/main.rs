@@ -4,6 +4,8 @@ use std::collections::HashSet;
 use std::io::prelude::*;
 use std::fs::File;
 use std::env;
+use std::process;
+
 #[macro_use]
 extern crate log;
 
@@ -96,8 +98,9 @@ fn uniquify(mapping: &mut HashMap<String, String>, expr: SExpr)
             
             return SExpr::List(new_elts);
         }
-        SExpr::Define(name, val) => {
+        SExpr::Define(name, args, val) => {
             return SExpr::Define(name,
+                                 args,
                                  Box::new(uniquify(mapping, *val)));
         },
         SExpr::If(cond, thn, els) => {
@@ -114,7 +117,10 @@ fn uniquify(mapping: &mut HashMap<String, String>, expr: SExpr)
         },
         SExpr::Prog(e) =>
             return SExpr::Prog(Box::new(uniquify(mapping, *e))),
-        SExpr::EOF => panic!("Don't know what to do with EOF"),
+        SExpr::EOF => {
+            error!("Don't know what to do with EOF");
+            process::exit(0);
+        },
     }
 }
 
@@ -129,7 +135,10 @@ fn flat_arg_type(v: Flat) -> X86Arg {
                 false => X86Arg::Imm(0),
             }
         },
-        _ => panic!("flat_arg_type: compound expression"),
+        _ => {
+            error!("flat_arg_type: compound expression");
+            process::exit(0);
+        },
     }
 }
 

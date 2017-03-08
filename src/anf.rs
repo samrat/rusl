@@ -50,7 +50,7 @@ pub fn flatten(expr: SExpr) -> (Flat, Vec<Flat>, Vec<String>) {
         SExpr::List(elts) => {
             panic!("NYI");
         },
-        SExpr::Define(name, val) => {
+        SExpr::Define(name, args, val) => {
             // TODO: FIXME
             return (Flat::Symbol("".to_string()), vec![], vec![]);
         },

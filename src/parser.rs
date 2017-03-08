@@ -1,6 +1,10 @@
+use std::process;
+
 use lexer::Token;
 use lexer::LexerState;
 use lexer::get_token;
+
+use log;
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub enum SExpr {
@@ -9,8 +13,7 @@ pub enum SExpr {
     Bool(bool),
     List(Vec<SExpr>),
 
-    // TODO: change define to be special-form for function definition
-    Define(String, Box<SExpr>),
+    Define(String, Vec<String>, Box<SExpr>),
     Let(Vec<(String, SExpr)>, Box<SExpr>),
     If(Box<SExpr>, Box<SExpr>, Box<SExpr>),
     App(Box<SExpr>, Vec<SExpr>),
@@ -57,6 +60,21 @@ pub fn get_expr(ls: &mut LexerState) -> SExpr {
     }
 }
 
+pub fn get_arg_names(args: Vec<SExpr>) -> Vec<String> {
+    let mut arg_names = vec![];
+    for arg in args {
+        match arg {
+            SExpr::Symbol(name) => arg_names.push(name),
+            _ => {
+                error!("arg should be a Symbol");
+                process::exit(0);
+            }
+        }
+    }
+
+    return arg_names;
+}
+
 pub fn get_ast(expr: SExpr) -> SExpr {
     match expr {
         SExpr::Symbol(sym) => {
@@ -71,13 +89,21 @@ pub fn get_ast(expr: SExpr) -> SExpr {
                 SExpr::Symbol(sym) => {
                     match &sym[..] {
                         "define" => {
-                            // TODO: Check that elts has correct length
-                            if let SExpr::Symbol(name) = elts[1].clone() {
-                                let e = elts[2].clone();
-                                return SExpr::Define(name, Box::new(e));
-                            }
-                            else {
-                                panic!("expected `name` to be a symbol");
+                            match elts[1].clone() {
+                                SExpr::List(defelts) => {
+                                    match defelts[0].clone() {
+                                        SExpr::Symbol(name) => {
+                                            let args = get_arg_names(defelts[1..].to_vec());
+                                            return SExpr::Define(name, args,
+                                                                 Box::new(get_ast(elts[2].clone())));
+                                        },
+                                        _ => {
+                                            error!("function name should be a symbol");
+                                            process::exit(0);
+                                        },
+                                    }
+                                },
+                                _ => panic!("invalid define syntax"),
                             }
                         },
                         "if" => {
@@ -130,6 +156,7 @@ pub fn read(ls: &mut LexerState) -> SExpr {
 #[test]
 fn test_parser() {
     let mut input = String::from("(if #f (+ 42 (foo 12)) 17) 
+                                  (define (foo x y z) (+ x 10))
                                   (+ 1 2)");
     let mut lexer = LexerState {
         s: input,
@@ -147,6 +174,12 @@ fn test_parser() {
                read(&mut lexer));
 
     // Second top-level s-expression
+    assert_eq!(SExpr::Define("foo".to_string(), vec!["x".to_string(), "y".to_string(), "z".to_string()], 
+                             Box::new(SExpr::App(Box::new(SExpr::Symbol("+".to_string())), 
+                                        vec![SExpr::Symbol("x".to_string()), SExpr::Number(10)]))),
+               read(&mut lexer));
+
+    // Third top-level s-expression
     assert_eq!(SExpr::App(Box::new(SExpr::Symbol("+".to_string())),
                           vec![SExpr::Number(1), 
                                SExpr::Number(2)]),
