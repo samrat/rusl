@@ -459,7 +459,7 @@ fn allocate_registers(live_intervals: HashMap<String, (i32, i32)>)
     }
     live_intervals_vec.sort_by_key(|interval| interval.clone().0);
     let mut mapping : HashMap<String, i32> = HashMap::new();
-    let mut free = vec![1,2];
+    let mut free = vec![1,2];   // TODO: FIXME
     let mut alloc : HashSet<i32> = HashSet::new();
     let mut active_intervals : Vec<(String, (i32, i32))> = vec![];
 
@@ -642,12 +642,22 @@ fn lower_if (instr: X86) -> Vec<X86> {
 
 fn lower_conditionals(prog: X86) -> X86 {
     match prog {
-        X86::Prog(defs, instrs, vars) => {
+        X86::Define(name, vars, instrs) => {
             let mut new_instrs = vec![];
             for i in instrs {
                 new_instrs.extend_from_slice(&lower_if(i));
             }
 
+            return X86::Define(name, vars, new_instrs);
+        },
+        X86::Prog(mut defs, instrs, vars) => {
+            let mut new_instrs = vec![];
+            for i in instrs {
+                new_instrs.extend_from_slice(&lower_if(i));
+            }
+
+            defs = defs.iter().map(|d| lower_conditionals(d.clone())).collect();
+            
             return X86::Prog(defs, new_instrs, vars);
         }
         _ => panic!("lower_conditionals: not top-level Prog"),
@@ -818,9 +828,10 @@ fn read_input() -> io::Result<()> {
     let instrs = select_instructions(flattened);
     let instrs = uncover_live(instrs);
     let homes_assigned = assign_homes(instrs);
-    println!("{:?}", homes_assigned);
+    let ifs_lowered = lower_conditionals(homes_assigned);
+    println!("{:?}", ifs_lowered);
 
-    println!("{}", print_x86(patch_instructions(lower_conditionals(homes_assigned))));
+    println!("{}", print_x86(patch_instructions(ifs_lowered)));
 
     Ok(())
 }
