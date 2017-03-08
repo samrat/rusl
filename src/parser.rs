@@ -17,7 +17,7 @@ pub enum SExpr {
     Let(Vec<(String, SExpr)>, Box<SExpr>),
     If(Box<SExpr>, Box<SExpr>, Box<SExpr>),
     App(Box<SExpr>, Vec<SExpr>),
-    Prog(Box<SExpr>),
+    Prog(Vec<SExpr>, Box<SExpr>),
     EOF,
 }
 

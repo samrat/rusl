@@ -22,7 +22,7 @@ use lexer::LexerState;
 use parser::SExpr;
 use parser::read;
 
-use anf::Flat;
+use anf::{Flat,FlatResult};
 use anf::flatten;
 
 
@@ -115,8 +115,8 @@ fn uniquify(mapping: &mut HashMap<String, String>, expr: SExpr)
             }
             return SExpr::App(f, new_args);
         },
-        SExpr::Prog(e) =>
-            return SExpr::Prog(Box::new(uniquify(mapping, *e))),
+        SExpr::Prog(defs, e) =>
+            return SExpr::Prog(defs, Box::new(uniquify(mapping, *e))),
         SExpr::EOF => {
             error!("Don't know what to do with EOF");
             process::exit(0);
@@ -217,22 +217,19 @@ fn flat_to_px86(instr: Flat) -> Vec<X86> {
 // convert a Flat expression into pseudo-x86 instructions. pseudo-x86
 // is like x86 but with if's and temporaries. It is also
 // "unpatched" (see `patch_instructions`)
-fn select_instructions(flat_prog: Flat, prog_assigns: Vec<Flat>, prog_vars: Vec<String>) -> X86 {
+fn select_instructions(flat_prog: FlatResult) -> X86 {
     match flat_prog {
-        Flat::Symbol(flat) => {
-            match &flat[..] {
-                "<PROGRAM>" => {
-                    let mut x86_instrs = vec![];
-                    for i in prog_assigns {
-                        let mut i_instrs = flat_to_px86(i);
-                        x86_instrs.append(&mut i_instrs);
-                    }
-                    return X86::Prog(x86_instrs, prog_vars);
-                },
-                &_ => panic!("arg passed to select_instructions is not top-level prog"),
+        FlatResult::Prog(defs, main_assigns, main_vars) => {
+            // TODO: select-instructions for defs
+            
+            let mut x86_instrs = vec![];
+            for i in main_assigns {
+                let mut i_instrs = flat_to_px86(i);
+                x86_instrs.append(&mut i_instrs);
             }
+            return X86::Prog(x86_instrs, main_vars);
         },
-        _ => panic!("flat_prog is not a symbol"),
+        _ => panic!("flat_prog is not a top-level Prog"),
     }
 }
 
@@ -581,6 +578,7 @@ fn lower_conditionals(prog: X86) -> X86 {
 
 fn patch_single_instr(instr: X86) -> Vec<X86> {
     match instr {
+        // both source and dest are indirect addresses
         X86::Mov(X86Arg::RegOffset(Reg::RBP, dest), 
                  X86Arg::RegOffset(Reg::RBP, src)) => {
             vec![X86::Mov(X86Arg::Reg(Reg::RAX),
@@ -588,6 +586,7 @@ fn patch_single_instr(instr: X86) -> Vec<X86> {
                  X86::Mov(X86Arg::RegOffset(Reg::RBP, dest), 
                           X86Arg::Reg(Reg::RAX))]
         },
+        // both source and dest are indirect addresses
         X86::Add(X86Arg::RegOffset(Reg::RBP, dest), 
                  X86Arg::RegOffset(Reg::RBP, src)) => {
             vec![X86::Mov(X86Arg::Reg(Reg::RAX),
@@ -722,11 +721,25 @@ fn read_input() -> io::Result<()> {
 
     let mut uniquify_mapping = HashMap::new();
 
+    let mut toplevel = vec![];
+    let mut sexpr = read(&mut lexer);
+    while sexpr != SExpr::EOF {
+        toplevel.push(sexpr);
+        sexpr = read(&mut lexer);
+    }
+
     let uniquified = uniquify(&mut uniquify_mapping,
-                              SExpr::Prog(Box::new(read(&mut lexer))));
-    let (flat_prog, prog_assigns, prog_vars) =
-        flatten(uniquified);
-    let instrs = select_instructions(flat_prog, prog_assigns, prog_vars);
+                              SExpr::Prog(toplevel[..toplevel.len()-1].to_vec(),
+                                          Box::new(toplevel[toplevel.len()-1].clone())));
+    let flattened = flatten(uniquified);
+    
+    // let (flat_prog, prog_assigns, prog_vars) =
+    //     match  {
+    //         FlatResult::Prog(defs, main_assigns, main_vars) =>
+    //             (main_assigns, main_vars),
+    //         _ => panic!("unreachable"),
+    //     };
+    let instrs = select_instructions(flattened);
     let instrs = uncover_live(instrs);
 
     println!("{}", print_x86(patch_instructions(lower_conditionals(assign_homes(instrs)))));
