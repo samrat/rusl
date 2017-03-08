@@ -113,6 +113,7 @@ fn uniquify(mapping: &mut HashMap<String, String>, expr: SExpr)
             return SExpr::List(new_elts);
         }
         SExpr::Define(name, args, val) => {
+            // TODO: uniquify function name
             return SExpr::Define(name,
                                  args,
                                  Box::new(uniquify(mapping, *val)));
@@ -691,11 +692,22 @@ fn patch_single_instr(instr: X86) -> Vec<X86> {
 
 fn patch_instructions(prog: X86) -> X86 {
     match prog {
-        X86::Prog(defs, instrs, vars) => {
+        X86::Define(name, vars, instrs) => {
             let mut patched_instrs = vec![];
             for i in instrs {
                 patched_instrs.extend_from_slice(&patch_single_instr(i));
             }
+
+            return X86::Define(name, vars, patched_instrs);
+        },
+        X86::Prog(mut defs, instrs, vars) => {
+            let mut patched_instrs = vec![];
+            for i in instrs {
+                patched_instrs.extend_from_slice(&patch_single_instr(i));
+            }
+
+            defs = defs.iter().map(|d| patch_instructions(d.clone())).collect();
+
             return X86::Prog(defs, patched_instrs, vars);
         },
         _ => panic!("patch_instructions: not top-level Prog"),
@@ -764,31 +776,59 @@ fn print_instr(instr: X86) -> String {
 }
 
 fn print_x86(prog: X86) -> String {
-    let prelude = "section .text
+
+    let mut instrs_str = match prog {
+        X86::Define(name, vars, instrs) => {
+            let prelude = format!("{}:
+    push rbp
+    mov rbp, rsp\n", name);
+            // TODO: save callee-save regs
+            let postlude = format!("    mov rdi, rax
+    add rsp, {}
+{}
+    mov rsp, rbp
+    pop rbp
+    ret", 0,                     // TODO: fix with stack-size
+                                   "; restore callee-save regs"
+            );
+
+            let mut instrs_str = String::from(prelude);
+            for i in instrs {
+                instrs_str.push_str(&print_instr(i));
+            }
+
+            instrs_str.push_str(&postlude[..]);
+            instrs_str
+        },
+        X86::Prog(defs, instrs, vars) => {
+            let mut defs_str = String::new();
+            for def in defs {
+                defs_str.push_str(&print_x86(def)[..]);
+            }
+            let prelude = "section .text
 extern print_int
 global main
 main:
     push rbp
     mov rbp, rsp\n";
-    // TODO: save/restore registers
-    let postlude = "    mov rdi, rax
+            // TODO: save/restore registers
+            let postlude = "    mov rdi, rax
     call print_int
 
     mov rsp, rbp
     pop rbp
     ret\n";
-    let mut instrs_str = match prog {
-        X86::Prog(defs, instrs, vars) => {
             let mut instrs_str = String::from(prelude);
             for i in instrs {
                 instrs_str.push_str(&print_instr(i));
             }
+            instrs_str.push_str(postlude);
+            instrs_str.push_str(&defs_str[..]);
             instrs_str
         },
         _ => panic!("print_x86: not top-level Prog"),
     };
 
-    instrs_str.push_str(postlude);
     return instrs_str;
 }
 
@@ -829,9 +869,10 @@ fn read_input() -> io::Result<()> {
     let instrs = uncover_live(instrs);
     let homes_assigned = assign_homes(instrs);
     let ifs_lowered = lower_conditionals(homes_assigned);
-    println!("{:?}", ifs_lowered);
+    let patched = patch_instructions(ifs_lowered);
+    println!("{:?}", patched);
 
-    println!("{}", print_x86(patch_instructions(ifs_lowered)));
+    println!("{}", print_x86(patched));
 
     Ok(())
 }
