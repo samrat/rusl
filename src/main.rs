@@ -64,7 +64,7 @@ enum X86 {
     DefineWithLives(String,               //  name
                     Vec<String>,          //vars
                     Vec<HashSet<String>>, // live_sets 
-                    Vec<X86>,             // new_instrs
+                    Vec<X86>,             // instrs
     ),
     
     Prog(Vec<X86>,              // defines
@@ -549,30 +549,50 @@ fn assign_homes_to_instrs(instrs: Vec<X86>, locs: HashMap<String, X86Arg>) -> Ve
     return new_instrs;
 }
 
-fn assign_homes(prog: X86) -> X86 {
+fn decide_locs(vars: &Vec<String>, instrs: &Vec<X86>, 
+               live_sets: Vec<HashSet<String>>) 
+               -> HashMap<String, X86Arg> {
     let regs = vec![Reg::RBX, Reg::RDX, Reg::RCX];
+
+    let mut live_intervals = HashMap::new();
+    compute_live_intervals(instrs.clone(),
+                           live_sets, 
+                           &mut live_intervals, 1);
+    let reg_alloc = allocate_registers(live_intervals);
+    let mut locs = HashMap::new();
+    let mut stack_size = 0;
+    for var in vars.clone() {
+        locs.insert(
+            var.clone(),
+            match reg_alloc.get(&var) {
+                Some(reg) => X86Arg::Reg(regs[reg.clone() as usize].clone()),
+                None => {
+                    stack_size += 1;
+                    X86Arg::RegOffset(Reg::RBP, stack_size * -8)
+                },
+            }
+        );
+    };
+
+    return locs;
+}
+
+fn assign_homes(prog: X86) -> X86 {
     match prog {
+        X86::DefineWithLives(name, vars, live_sets, instrs) => {
+            let locs = decide_locs(&vars, &instrs, live_sets);
+            return X86::Define(name, vars, 
+                               assign_homes_to_instrs(instrs, locs));
+        },
+        
         X86::ProgWithLives(defs, instrs, vars, live_sets) => {
-            let mut live_intervals = HashMap::new();
-            compute_live_intervals(instrs.clone(),
-                                   live_sets, 
-                                   &mut live_intervals, 1);
-            let reg_alloc = allocate_registers(live_intervals);
-            let mut locs = HashMap::new();
-            let mut stack_size = 0;
-            for var in vars.clone() {
-                locs.insert(
-                    var.clone(),
-                    match reg_alloc.get(&var) {
-                        Some(reg) => X86Arg::Reg(regs[reg.clone() as usize].clone()),
-                        None => {
-                            stack_size += 1;
-                            X86Arg::RegOffset(Reg::RBP, stack_size * -8)
-                        },
-                    }
-                    );
-                };
-            return X86::Prog(defs, assign_homes_to_instrs(instrs, locs), vars);
+            let locs = decide_locs(&vars, &instrs, live_sets);
+            let mut new_defs = vec![];
+            for def in defs {
+                new_defs.push(assign_homes(def));
+            }
+            
+            return X86::Prog(new_defs, assign_homes_to_instrs(instrs, locs), vars);
         },
         _ => panic!("assign_homes: not top level prog"),
     }
@@ -797,9 +817,10 @@ fn read_input() -> io::Result<()> {
     
     let instrs = select_instructions(flattened);
     let instrs = uncover_live(instrs);
-    println!("{:?}", instrs);
+    let homes_assigned = assign_homes(instrs);
+    println!("{:?}", homes_assigned);
 
-    println!("{}", print_x86(patch_instructions(lower_conditionals(assign_homes(instrs)))));
+    println!("{}", print_x86(patch_instructions(lower_conditionals(homes_assigned))));
 
     Ok(())
 }
