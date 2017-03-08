@@ -4,3 +4,4 @@ version = "0.1.0"
 authors = ["Samrat Man Singh <samratmansingh@gmail.com>"]
 
 [dependencies]
+log = "0.3.7"

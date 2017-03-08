@@ -4,6 +4,8 @@ use std::collections::HashSet;
 use std::io::prelude::*;
 use std::fs::File;
 use std::env;
+#[macro_use]
+extern crate log;
 
 mod util;
 mod lexer;
