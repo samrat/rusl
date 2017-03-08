@@ -117,8 +117,6 @@ fn uniquify(mapping: &mut HashMap<String, String>, expr: SExpr)
 }
 
 
-
-
 fn flat_arg_type(v: Flat) -> X86Arg {
     match v {
         Flat::Symbol(name) => X86Arg::Var(name),
@@ -351,6 +349,8 @@ fn uncover_live(prog: X86) -> X86 {
     }
 }
 
+// For each variable, figure out the interval when it is live. Results
+// are inserted into live_intervals.
 fn compute_live_intervals(instrs: Vec<X86>, live_sets: Vec<HashSet<String>>,
                           live_intervals: &mut HashMap<String, (i32, i32)>,
                           init_line_num: i32) {
@@ -381,6 +381,8 @@ fn compute_live_intervals(instrs: Vec<X86>, live_sets: Vec<HashSet<String>>,
     }
 }
 
+// Allocate registers for variables. If it can't find a free register,
+// the variable won't be present as a key in the returned hash-map
 fn allocate_registers(live_intervals: HashMap<String, (i32, i32)>)
                       -> HashMap<String, i32> {
     let mut live_intervals_vec = vec![];
@@ -409,7 +411,7 @@ fn allocate_registers(live_intervals: HashMap<String, (i32, i32)>)
             }
         }
 
-        // allocate free register, if any. Spill if none
+        // allocate free register, if any.
         if free.len() > 0 {
             mapping.insert(v.clone(), free.pop().unwrap());
         }
@@ -437,6 +439,9 @@ fn assign_homes_to_op2(locs: &HashMap<String, X86Arg>,
     }
 }
 
+// Given a list of instructions and mapping from vars to
+// "homes"(register/stack location), return a new list of instructions
+// with vars replaced with their assigned homes.
 fn assign_homes_to_instrs(instrs: Vec<X86>, locs: HashMap<String, X86Arg>) -> Vec<X86> {
     let mut new_instrs = vec![];
     for i in instrs {
