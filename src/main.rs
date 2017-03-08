@@ -181,6 +181,7 @@ fn flat_to_px86(instr: Flat) -> Vec<X86> {
         Flat::If(cnd, thn, els) => {
             let (eq_left, eq_right) = match *cnd {
                 x => match x {
+                    // https://github.com/rust-lang/rust/issues/16223
                     Flat::EqP(left, right) => (left, right),
                     _ => panic!("if cond needs to be Flat::EqP"),
                 },
@@ -293,6 +294,7 @@ fn get_live_after_sets(mut instrs: Vec<X86>, lives: HashSet<String>)
                     get_live_after_sets(elss.clone(), live_of_next.clone());
                 let cond_vars = match *cnd.clone() {
                     x => match x {
+                        // https://github.com/rust-lang/rust/issues/16223
                         X86::EqP(left, right) => {
                             match (left, right) {
                                 (X86Arg::Var(l), X86Arg::Var(r)) => vec![l, r],
@@ -451,6 +453,7 @@ fn assign_homes_to_instrs(instrs: Vec<X86>, locs: HashMap<String, X86Arg>) -> Ve
             X86::IfWithLives(cnd, thn, thn_lives, els, els_lives) => {
                 let new_cnd = match *cnd {
                     x => match x {
+                        // https://github.com/rust-lang/rust/issues/16223
                         X86::EqP(left, right) => {
                         let new_left = match left {
                             X86Arg::Var(v) => locs.get(&v).unwrap().clone(),
@@ -516,6 +519,7 @@ fn lower_if (instr: X86) -> Vec<X86> {
         X86::If(cnd, thn, els) => {
             let (eqp_left, eqp_right) = match *cnd {
                 x => match x {
+                    // https://github.com/rust-lang/rust/issues/16223
                     X86::EqP(left, right) => (left, right),
                     _ => panic!("if cond is always EqP"),
                 },
