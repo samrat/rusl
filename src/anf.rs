@@ -82,7 +82,7 @@ pub fn flatten(expr: SExpr) -> FlatResult {
 
             // Remove args from body_vars
             for arg in args.clone() {
-                body_vars.iter().filter(|&v| v != &arg);
+                body_vars = body_vars.iter().filter(|&v| v != &arg).cloned().collect();
             }
             
             return FlatResult::Define(name,
@@ -226,14 +226,18 @@ fn test_flatten() {
 
     assert_eq!(
         flatten(SExpr::Prog(vec![], Box::new(read(&mut lexer)))),
-        FlatResult::Flat(
-            Flat::Symbol("<PROGRAM>".to_string()), 
-            vec![Flat::Assign("tmp1".to_string(), Box::new(Flat::Prim("+".to_string(), vec![Flat::Number(13), Flat::Number(14)]))), 
-                 Flat::Assign("tmp2".to_string(), Box::new(Flat::Prim("+".to_string(), vec![Flat::Number(12), Flat::Symbol("tmp1".to_string())]))),
-                 Flat::Return(Box::new(Flat::Symbol("tmp2".to_string())))
-            ], vec!["tmp1".to_string(), "tmp2".to_string()])
+        FlatResult::Prog(vec![], 
+                         vec![Flat::Assign("tmp1".to_string(), Box::new(Flat::Prim("+".to_string(), 
+                                                                                   vec![Flat::Number(13), Flat::Number(14)]))), 
+                              Flat::Assign("tmp2".to_string(), 
+                                           Box::new(Flat::Prim("+".to_string(), 
+                                                               vec![Flat::Number(12), Flat::Symbol("tmp1".to_string())]))), 
+                              Flat::Return(Box::new(Flat::Symbol("tmp2".to_string())))], 
+                         vec!["tmp1".to_string(), "tmp2".to_string()])
     );
 
+    // TODO: Reset start(var counter) so that these asserts are
+    // independent.
     assert_eq!(
         flatten(SExpr::Define("foo".to_string(), vec!["x".to_string(), "y".to_string(), "z".to_string()], 
                               Box::new(SExpr::App(Box::new(SExpr::Symbol("+".to_string())), 
@@ -243,6 +247,6 @@ fn test_flatten() {
                            vec![Flat::Assign("tmp3".to_string(),
                                              Box::new(Flat::Prim("+".to_string(), vec![Flat::Symbol("x".to_string()), Flat::Number(10)]))), 
                                 Flat::Return(Box::new(Flat::Symbol("tmp3".to_string())))],
-                           vec!["x".to_string(), "tmp3".to_string()])
+                           vec!["tmp3".to_string()])
     );
 }
