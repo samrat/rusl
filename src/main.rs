@@ -62,7 +62,7 @@ enum X86 {
     ),
     Define(String, Vec<String>, Vec<X86>),
     DefineWithLives(String,               //  name
-                    Vec<String>,          //vars
+                    Vec<String>,          // vars
                     Vec<HashSet<String>>, // live_sets 
                     Vec<X86>,             // instrs
     ),
@@ -104,13 +104,10 @@ fn uniquify(mapping: &mut HashMap<String, String>, expr: SExpr)
             return SExpr::Let(new_bindings, 
                               Box::new(uniquify(mapping, *body)));
         },
-        SExpr::List(elts) => {
-            let mut new_elts = vec![];
-            for e in elts {
-                new_elts.push(uniquify(mapping, e));
-            }
+        SExpr::List(mut elts) => {
+            elts = elts.iter().map(|e| uniquify(mapping, e.clone())).collect();
             
-            return SExpr::List(new_elts);
+            return SExpr::List(elts);
         }
         SExpr::Define(name, args, val) => {
             // TODO: uniquify function name
@@ -123,12 +120,9 @@ fn uniquify(mapping: &mut HashMap<String, String>, expr: SExpr)
                              Box::new(uniquify(mapping, *thn)),
                              Box::new(uniquify(mapping, *els)));
         },
-        SExpr::App(f, args) => {
-            let mut new_args = vec![];
-            for a in args {
-                new_args.push(uniquify(mapping, a));
-            }
-            return SExpr::App(f, new_args);
+        SExpr::App(f, mut args) => {
+            args = args.iter().map(|a| uniquify(mapping, a.clone())).collect();
+            return SExpr::App(f, args);
         },
         SExpr::Prog(defs, e) =>
             return SExpr::Prog(defs, Box::new(uniquify(mapping, *e))),
@@ -402,14 +396,11 @@ fn uncover_live(prog: X86) -> X86 {
             return X86::DefineWithLives(name, vars, live_sets, new_instrs);
         },
         
-        X86::Prog(defs, instrs, vars) => {
+        X86::Prog(mut defs, instrs, vars) => {
             let (_, live_sets, new_instrs) = get_live_after_sets(instrs, HashSet::new());
-            
-            let mut new_defs = vec![];
-            for def in defs {
-                new_defs.push(uncover_live(def));
-            }
-            return X86::ProgWithLives(new_defs, 
+
+            defs = defs.iter().map(|def| uncover_live(def.clone())).collect();
+            return X86::ProgWithLives(defs, 
                                       new_instrs, 
                                       vars, 
                                       live_sets);
@@ -643,23 +634,16 @@ fn lower_if (instr: X86) -> Vec<X86> {
 
 fn lower_conditionals(prog: X86) -> X86 {
     match prog {
-        X86::Define(name, vars, instrs) => {
-            let mut new_instrs = vec![];
-            for i in instrs {
-                new_instrs.extend_from_slice(&lower_if(i));
-            }
+        X86::Define(name, vars, mut instrs) => {
+            instrs = instrs.iter().flat_map(|i| lower_if(i.clone())).collect();
 
-            return X86::Define(name, vars, new_instrs);
+            return X86::Define(name, vars, instrs);
         },
-        X86::Prog(mut defs, instrs, vars) => {
-            let mut new_instrs = vec![];
-            for i in instrs {
-                new_instrs.extend_from_slice(&lower_if(i));
-            }
-
+        X86::Prog(mut defs, mut instrs, vars) => {
+            instrs = instrs.iter().flat_map(|i| lower_if(i.clone())).collect();
             defs = defs.iter().map(|d| lower_conditionals(d.clone())).collect();
             
-            return X86::Prog(defs, new_instrs, vars);
+            return X86::Prog(defs, instrs, vars);
         }
         _ => panic!("lower_conditionals: not top-level Prog"),
     }
@@ -692,19 +676,15 @@ fn patch_single_instr(instr: X86) -> Vec<X86> {
 
 fn patch_instructions(prog: X86) -> X86 {
     match prog {
-        X86::Define(name, vars, instrs) => {
-            let mut patched_instrs = vec![];
-            for i in instrs {
-                patched_instrs.extend_from_slice(&patch_single_instr(i));
-            }
+        X86::Define(name, vars, mut instrs) => {
+            let patched_instrs = 
+                instrs.iter().flat_map(|i| patch_single_instr(i.clone())).collect();
 
             return X86::Define(name, vars, patched_instrs);
         },
         X86::Prog(mut defs, instrs, vars) => {
-            let mut patched_instrs = vec![];
-            for i in instrs {
-                patched_instrs.extend_from_slice(&patch_single_instr(i));
-            }
+            let patched_instrs = 
+                instrs.iter().flat_map(|i| patch_single_instr(i.clone())).collect();
 
             defs = defs.iter().map(|d| patch_instructions(d.clone())).collect();
 
