@@ -57,8 +57,7 @@ pub fn get_token(ls: &mut LexerState) -> Token {
             else if is_valid_symbol_start(c) {
                 let mut acc = String::new();
                 let mut s = c;
-                while (s.is_alphanumeric() || 
-                       is_valid_symbol_start(s)) {
+                while s.is_alphanumeric() || is_valid_symbol_start(s) {
                     acc.push(s);
                     iter.next();
                     ls.pos += 1;
