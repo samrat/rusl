@@ -30,7 +30,7 @@ enum CC {
 
 #[derive(Debug, Clone)]
 enum Reg {
-    RAX, RBX, RBP
+    RAX, RBX, RBP, RCX, RDX,
 }
 
 #[derive(Debug, Clone)]
@@ -57,6 +57,8 @@ enum X86 {
                 Vec<HashSet<String>>           // else-live-sets
     ),
     Prog(Vec<X86>, Vec<String>),
+
+    ProgWithLives(Vec<X86>, Vec<String>, Vec<HashSet<String>>),
     JmpIf(CC, String),
     Jmp(String),
     Label(String),
@@ -272,9 +274,12 @@ fn instruction_rw(instr: X86) -> (Vec<String>, Vec<String>, Vec<String>) {
     }
 }
 
+
+// Find live variables during each instruction. For `if`s, the live
+// sets are embedded in the new list of instructions
 fn get_live_after_sets(mut instrs: Vec<X86>, lives: HashSet<String>) 
                    -> (HashSet<String>, Vec<HashSet<String>>, Vec<X86>) {
-    let mut live_of_next = HashSet::new();
+    let mut live_of_next = lives.clone();
     let mut live_after_sets = vec![];
     let mut new_instrs = vec![];
     
@@ -282,10 +287,10 @@ fn get_live_after_sets(mut instrs: Vec<X86>, lives: HashSet<String>)
     for instr in instrs {
         match instr {
             X86::If(cnd, thns, elss) => {
-                let (thn_lives, thn_live_sets, _) =
-                    get_live_after_sets(thns.clone(), lives.clone());
-                let (els_lives, els_live_sets, _) =
-                    get_live_after_sets(elss.clone(), lives.clone());
+                let (thn_lives, thn_live_sets, new_thns) =
+                    get_live_after_sets(thns.clone(), live_of_next.clone());
+                let (els_lives, els_live_sets, new_elss) =
+                    get_live_after_sets(elss.clone(), live_of_next.clone());
                 let cond_vars = match *cnd.clone() {
                     x => match x {
                         X86::EqP(left, right) => {
@@ -300,7 +305,7 @@ fn get_live_after_sets(mut instrs: Vec<X86>, lives: HashSet<String>)
                     }
                 };
 
-                let mut live = live_of_next.clone();
+                let mut live = lives.clone();
                 live = live.union(&lives).cloned().collect();
                 live = live.union(&thn_lives).cloned().collect();
                 live = live.union(&els_lives).cloned().collect();
@@ -308,17 +313,19 @@ fn get_live_after_sets(mut instrs: Vec<X86>, lives: HashSet<String>)
                 live_of_next = live.clone();
                 live_after_sets.push(live);
 
-                new_instrs.push(X86::IfWithLives(cnd, thns, thn_live_sets, elss, els_live_sets));
+                new_instrs.push(X86::IfWithLives(
+                    cnd,
+                    new_thns, thn_live_sets,
+                    new_elss, els_live_sets));
             },
 
             _ => {
                 let (all_vars, read_vars, written_vars) =
                     instruction_rw(instr.clone());
                 let mut live = live_of_next.clone();
-                for w in written_vars {
-                    live.remove(&w);
-                }
-
+                let written_vars_set : HashSet<_> = 
+                    written_vars.iter().cloned().collect();
+                live = live.difference(&written_vars_set).cloned().collect();
                 let read_vars_set : HashSet<_> = read_vars.iter().cloned().collect();
                 live = live.union(&read_vars_set).cloned().collect();
                 
@@ -334,40 +341,112 @@ fn get_live_after_sets(mut instrs: Vec<X86>, lives: HashSet<String>)
     return (live_of_next, live_after_sets, new_instrs);
 }
 
-fn assign_homes_to_op2(locs: &HashMap<String, i32>, 
+fn uncover_live(prog: X86) -> X86 {
+    match prog {
+        X86::Prog(instrs, vars) => {
+            let (_, live_sets, new_instrs) = get_live_after_sets(instrs, HashSet::new());
+            return X86::ProgWithLives(new_instrs, vars, live_sets);
+        },
+        _ => panic!("prog is not a top-level Prog"),
+    }
+}
+
+fn compute_live_intervals(instrs: Vec<X86>, live_sets: Vec<HashSet<String>>,
+                          live_intervals: &mut HashMap<String, (i32, i32)>,
+                          init_line_num: i32) {
+    let mut line_num = init_line_num;
+    let instr_live_sets : Vec<_> = instrs.iter().zip(live_sets).collect();
+    for (instr, live_set) in instr_live_sets {
+        match (instr.clone(), live_set.clone()) {
+            (X86::IfWithLives(cnd, thns, thn_lives,
+                              elss, els_lives), _) => {
+                compute_live_intervals(thns.clone(), thn_lives, live_intervals, line_num);
+                compute_live_intervals(elss.clone(), els_lives, live_intervals, line_num);
+                line_num = line_num + thns.len() as i32 + elss.len() as i32;
+            },
+            (_, _) => {
+                for v in live_set {
+                    match live_intervals.get(&v) {
+                        Some(&(start, end)) => {
+                            live_intervals.insert(v, (start, line_num));
+                        },
+                        None => {
+                            live_intervals.insert(v, (line_num-1, line_num));
+                        },
+                    }
+                }
+                line_num = line_num + 1;
+            },
+        }
+    }
+}
+
+fn allocate_registers(live_intervals: HashMap<String, (i32, i32)>)
+                      -> HashMap<String, i32> {
+    let mut live_intervals_vec = vec![];
+    for (v, live_interval) in live_intervals {
+        live_intervals_vec.push((v, live_interval));
+    }
+    live_intervals_vec.sort_by_key(|interval| interval.clone().0);
+    let mut mapping : HashMap<String, i32> = HashMap::new();
+    let mut free = vec![1,2];
+    let mut alloc : HashSet<i32> = HashSet::new();
+    let mut active_intervals : Vec<(String, (i32, i32))> = vec![];
+
+    for (v, (start, end)) in live_intervals_vec.clone() {
+        // clear done intervals from alloc, and free registers
+        // allocated to them
+        for (i, &(ref a, (astart, aend))) in active_intervals.clone().iter().enumerate() {
+            if aend < start {
+                active_intervals.remove(i);
+
+                match mapping.get(a) {
+                    Some(reg) => {
+                        free.push(reg.clone());
+                    },
+                    None => (),
+                }
+            }
+        }
+
+        // allocate free register, if any. Spill if none
+        if free.len() > 0 {
+            mapping.insert(v.clone(), free.pop().unwrap());
+        }
+
+        // add current to active_intervals
+        active_intervals.push((v.clone(), (start, end)));
+    }
+    return mapping;
+}
+
+fn assign_homes_to_op2(locs: &HashMap<String, X86Arg>,
                        src: X86Arg, dest: X86Arg) -> (X86Arg, X86Arg) {
     match (dest.clone(), src.clone()) {
         (X86Arg::Var(d), X86Arg::Var(s)) =>
-            (X86Arg::RegOffset(Reg::RBP, 
-                               locs.get(&d).unwrap().clone()),
-             X86Arg::RegOffset(Reg::RBP, 
-                               locs.get(&s).unwrap().clone())),
+            (locs.get(&d).unwrap().clone(),
+             locs.get(&s).unwrap().clone()),
         (X86Arg::Var(d), _) =>
-            (X86Arg::RegOffset(Reg::RBP, 
-                               locs.get(&d).unwrap().clone()),
-             src) ,
+            (locs.get(&d).unwrap().clone(),
+             src),
         (_, X86Arg::Var(s)) =>
-            (dest,
-             X86Arg::RegOffset(Reg::RBP, 
-                               locs.get(&s).unwrap().clone())) ,
+            (dest, locs.get(&s).unwrap().clone()),
         (X86Arg::Reg(reg), _) =>
             (dest, src) ,
         _ => panic!("unreachable"),
     }
 }
 
-fn assign_homes_to_instrs(instrs: Vec<X86>, locs: HashMap<String, i32>) -> Vec<X86> {
+fn assign_homes_to_instrs(instrs: Vec<X86>, locs: HashMap<String, X86Arg>) -> Vec<X86> {
     let mut new_instrs = vec![];
     for i in instrs {
         match i {
-            X86::If(cnd, thn, els) => {
+            X86::IfWithLives(cnd, thn, thn_lives, els, els_lives) => {
                 let new_cnd = match *cnd {
                     x => match x {
                         X86::EqP(left, right) => {
                         let new_left = match left {
-                            X86Arg::Var(v) => 
-                                X86Arg::RegOffset(Reg::RBP, 
-                                                  locs.get(&v).unwrap().clone()),
+                            X86Arg::Var(v) => locs.get(&v).unwrap().clone(),
                             _ => left,
                         };
                         X86::EqP(new_left, right)
@@ -389,7 +468,7 @@ fn assign_homes_to_instrs(instrs: Vec<X86>, locs: HashMap<String, i32>) -> Vec<X
                 let (new_dest, new_src) = assign_homes_to_op2(&locs, src, dest);
                 new_instrs.push(X86::Add(new_dest, new_src))
             },
-            _ => panic!("NYI"),
+            _ => panic!("NYI: {:?}", i),
         }
     };
     
@@ -397,14 +476,28 @@ fn assign_homes_to_instrs(instrs: Vec<X86>, locs: HashMap<String, i32>) -> Vec<X
 }
 
 fn assign_homes(prog: X86) -> X86 {
+    let regs = vec![Reg::RBX, Reg::RDX, Reg::RCX];
     match prog {
-        X86::Prog(instrs, vars) => {
+        X86::ProgWithLives(instrs, vars, live_sets) => {
+            let mut live_intervals = HashMap::new();
+            compute_live_intervals(instrs.clone(),
+                                   live_sets, 
+                                   &mut live_intervals, 1);
+            let reg_alloc = allocate_registers(live_intervals);
             let mut locs = HashMap::new();
             let mut stack_size = 0;
             for var in vars.clone() {
-                stack_size += 1;
-                locs.insert(var, stack_size * -8);
-            };
+                locs.insert(
+                    var.clone(),
+                    match reg_alloc.get(&var) {
+                        Some(reg) => X86Arg::Reg(regs[reg.clone() as usize].clone()),
+                        None => {
+                            stack_size += 1;
+                            X86Arg::RegOffset(Reg::RBP, stack_size * -8)
+                        },
+                    }
+                    );
+                };
             return X86::Prog(assign_homes_to_instrs(instrs, locs), vars);
         },
         _ => panic!("assign_homes: not top level prog"),
@@ -508,6 +601,8 @@ fn display_reg(reg: Reg) -> String {
         Reg::RAX => "rax",
         Reg::RBX => "rbx",
         Reg::RBP => "rbp",
+        Reg::RDX => "rdx",
+        Reg::RCX => "rcx",
     }.to_string()
 }
 
@@ -612,12 +707,7 @@ fn read_input() -> io::Result<()> {
     let (flat_prog, prog_assigns, prog_vars) =
         flatten(uniquified);
     let instrs = select_instructions(flat_prog, prog_assigns, prog_vars);
-
-    match instrs.clone() {
-        X86::Prog(instrs, _) => 
-            println!("{:?}", get_live_after_sets(instrs, HashSet::new())),
-        _ => panic!("Don't care"),
-    }
+    let instrs = uncover_live(instrs);
 
     println!("{}", print_x86(patch_instructions(lower_conditionals(assign_homes(instrs)))));
 
