@@ -34,7 +34,7 @@ enum CC {
 
 #[derive(Debug, Clone)]
 enum Reg {
-    RAX, RBX, RBP, RCX, RDX,
+    RAX, RBX, RBP, RCX, RDX, RDI, RSI, R8, R9,
 }
 
 #[derive(Debug, Clone)]
@@ -60,9 +60,23 @@ enum X86 {
                 Vec<X86>,                      // else
                 Vec<HashSet<String>>           // else-live-sets
     ),
-    Prog(Vec<X86>, Vec<String>),
+    Define(String, Vec<String>, Vec<X86>),
+    DefineWithLives(String,               //  name
+                    Vec<String>,          //vars
+                    Vec<HashSet<String>>, // live_sets 
+                    Vec<X86>,             // new_instrs
+    ),
+    
+    Prog(Vec<X86>,              // defines
+         Vec<X86>,              // main-instructions
+         Vec<String>            // main-vars
+    ),
 
-    ProgWithLives(Vec<X86>, Vec<String>, Vec<HashSet<String>>),
+    ProgWithLives(Vec<X86>,     // defines
+                  Vec<X86>,     // main-instructions
+                  Vec<String>,  // main-vars
+                  Vec<HashSet<String>> // live-sets
+    ),
     JmpIf(CC, String),
     Jmp(String),
     Label(String),
@@ -218,16 +232,47 @@ fn flat_to_px86(instr: Flat) -> Vec<X86> {
 // is like x86 but with if's and temporaries. It is also
 // "unpatched" (see `patch_instructions`)
 fn select_instructions(flat_prog: FlatResult) -> X86 {
+    let arg_reg_order = vec![Reg::RDI,
+                             Reg::RSI,
+                             Reg::RDX, 
+                             Reg::RCX, 
+                             Reg::R8, 
+                             Reg::R9];
     match flat_prog {
+        FlatResult::Define(name, args, assigns, mut vars) =>
+        {
+            let mut move_args = vec![];
+            for (i, arg) in args.iter().enumerate() {
+                move_args.push(
+                    X86::Mov(X86Arg::Var(arg.clone()), 
+                             X86Arg::Reg(arg_reg_order[i].clone()))
+                );
+            }
+            
+            let mut x86_instrs = move_args;
+            for i in assigns {
+                let mut i_instrs = flat_to_px86(i);
+                x86_instrs.append(&mut i_instrs);
+            }
+
+            vars.extend_from_slice(&args);
+            return X86::Define(name,
+                               vars,
+                               x86_instrs);
+        },
+        
         FlatResult::Prog(defs, main_assigns, main_vars) => {
-            // TODO: select-instructions for defs
+            let mut x86_defines = vec![];
+            for def in defs {
+                x86_defines.push(select_instructions(def));
+            }
             
             let mut x86_instrs = vec![];
             for i in main_assigns {
                 let mut i_instrs = flat_to_px86(i);
                 x86_instrs.append(&mut i_instrs);
             }
-            return X86::Prog(x86_instrs, main_vars);
+            return X86::Prog(x86_defines, x86_instrs, main_vars);
         },
         _ => panic!("flat_prog is not a top-level Prog"),
     }
@@ -351,9 +396,22 @@ fn get_live_after_sets(mut instrs: Vec<X86>, lives: HashSet<String>)
 
 fn uncover_live(prog: X86) -> X86 {
     match prog {
-        X86::Prog(instrs, vars) => {
+        X86::Define(name, vars, instrs) => {
             let (_, live_sets, new_instrs) = get_live_after_sets(instrs, HashSet::new());
-            return X86::ProgWithLives(new_instrs, vars, live_sets);
+            return X86::DefineWithLives(name, vars, live_sets, new_instrs);
+        },
+        
+        X86::Prog(defs, instrs, vars) => {
+            let (_, live_sets, new_instrs) = get_live_after_sets(instrs, HashSet::new());
+            
+            let mut new_defs = vec![];
+            for def in defs {
+                new_defs.push(uncover_live(def));
+            }
+            return X86::ProgWithLives(new_defs, 
+                                      new_instrs, 
+                                      vars, 
+                                      live_sets);
         },
         _ => panic!("prog is not a top-level Prog"),
     }
@@ -494,7 +552,7 @@ fn assign_homes_to_instrs(instrs: Vec<X86>, locs: HashMap<String, X86Arg>) -> Ve
 fn assign_homes(prog: X86) -> X86 {
     let regs = vec![Reg::RBX, Reg::RDX, Reg::RCX];
     match prog {
-        X86::ProgWithLives(instrs, vars, live_sets) => {
+        X86::ProgWithLives(defs, instrs, vars, live_sets) => {
             let mut live_intervals = HashMap::new();
             compute_live_intervals(instrs.clone(),
                                    live_sets, 
@@ -514,7 +572,7 @@ fn assign_homes(prog: X86) -> X86 {
                     }
                     );
                 };
-            return X86::Prog(assign_homes_to_instrs(instrs, locs), vars);
+            return X86::Prog(defs, assign_homes_to_instrs(instrs, locs), vars);
         },
         _ => panic!("assign_homes: not top level prog"),
     }
@@ -564,13 +622,13 @@ fn lower_if (instr: X86) -> Vec<X86> {
 
 fn lower_conditionals(prog: X86) -> X86 {
     match prog {
-        X86::Prog(instrs, vars) => {
+        X86::Prog(defs, instrs, vars) => {
             let mut new_instrs = vec![];
             for i in instrs {
                 new_instrs.extend_from_slice(&lower_if(i));
             }
 
-            return X86::Prog(new_instrs, vars);
+            return X86::Prog(defs, new_instrs, vars);
         }
         _ => panic!("lower_conditionals: not top-level Prog"),
     }
@@ -603,12 +661,12 @@ fn patch_single_instr(instr: X86) -> Vec<X86> {
 
 fn patch_instructions(prog: X86) -> X86 {
     match prog {
-        X86::Prog(instrs, vars) => {
+        X86::Prog(defs, instrs, vars) => {
             let mut patched_instrs = vec![];
             for i in instrs {
                 patched_instrs.extend_from_slice(&patch_single_instr(i));
             }
-            return X86::Prog(patched_instrs, vars);
+            return X86::Prog(defs, patched_instrs, vars);
         },
         _ => panic!("patch_instructions: not top-level Prog"),
     }
@@ -622,6 +680,10 @@ fn display_reg(reg: Reg) -> String {
         Reg::RBP => "rbp",
         Reg::RDX => "rdx",
         Reg::RCX => "rcx",
+        Reg::RDI => "rdi",
+        Reg::RSI => "rsi",
+        Reg::R8 => "r8",
+        Reg::R9 => "r9",
     }.to_string()
 }
 
@@ -686,7 +748,7 @@ main:
     pop rbp
     ret\n";
     let mut instrs_str = match prog {
-        X86::Prog(instrs, vars) => {
+        X86::Prog(defs, instrs, vars) => {
             let mut instrs_str = String::from(prelude);
             for i in instrs {
                 instrs_str.push_str(&print_instr(i));
@@ -733,14 +795,9 @@ fn read_input() -> io::Result<()> {
                                           Box::new(toplevel[toplevel.len()-1].clone())));
     let flattened = flatten(uniquified);
     
-    // let (flat_prog, prog_assigns, prog_vars) =
-    //     match  {
-    //         FlatResult::Prog(defs, main_assigns, main_vars) =>
-    //             (main_assigns, main_vars),
-    //         _ => panic!("unreachable"),
-    //     };
     let instrs = select_instructions(flattened);
     let instrs = uncover_live(instrs);
+    println!("{:?}", instrs);
 
     println!("{}", print_x86(patch_instructions(lower_conditionals(assign_homes(instrs)))));
 
