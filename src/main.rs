@@ -70,6 +70,10 @@ enum X86 {
                     Vec<HashSet<String>>, // live_sets 
                     Vec<X86>,             // instrs
     ),
+    DefineWithStackSize(String, // name
+                        i32,    // stack size
+                        Vec<X86>, // instrs
+                        ),
     
     Prog(Vec<X86>,              // defines
          Vec<X86>,              // main-instructions
@@ -82,6 +86,10 @@ enum X86 {
                   Vec<HashSet<String>> // live-sets
     ),
 
+    ProgWithStackSize(Vec<X86>,     // defines
+                      Vec<X86>,     // main-instructions
+                      i32,          // stack size
+    ),
     Call(String),
     JmpIf(CC, String),
     Jmp(String),
@@ -578,7 +586,7 @@ fn assign_homes_to_instrs(instrs: Vec<X86>, locs: HashMap<String, X86Arg>) -> Ve
 
 fn decide_locs(vars: &Vec<String>, instrs: &Vec<X86>, 
                live_sets: Vec<HashSet<String>>) 
-               -> HashMap<String, X86Arg> {
+               -> (HashMap<String, X86Arg>, i32) {
     let regs = vec![Reg::RBX, Reg::RDX, Reg::RCX];
 
     let mut live_intervals = HashMap::new();
@@ -601,25 +609,25 @@ fn decide_locs(vars: &Vec<String>, instrs: &Vec<X86>,
         );
     };
 
-    return locs;
+    return (locs, stack_size);
 }
 
 fn assign_homes(prog: X86) -> X86 {
     match prog {
         X86::DefineWithLives(name, vars, live_sets, instrs) => {
-            let locs = decide_locs(&vars, &instrs, live_sets);
-            return X86::Define(name, vars, 
-                               assign_homes_to_instrs(instrs, locs));
+            let (locs, stack_size) = decide_locs(&vars, &instrs, live_sets);
+            return X86::DefineWithStackSize(name, stack_size, 
+                                            assign_homes_to_instrs(instrs, locs));
         },
         
         X86::ProgWithLives(defs, instrs, vars, live_sets) => {
-            let locs = decide_locs(&vars, &instrs, live_sets);
+            let (locs, stack_size) = decide_locs(&vars, &instrs, live_sets);
             let mut new_defs = vec![];
             for def in defs {
                 new_defs.push(assign_homes(def));
             }
             
-            return X86::Prog(new_defs, assign_homes_to_instrs(instrs, locs), vars);
+            return X86::ProgWithStackSize(new_defs, assign_homes_to_instrs(instrs, locs), stack_size);
         },
         _ => panic!("assign_homes: not top level prog"),
     }
@@ -669,16 +677,16 @@ fn lower_if (instr: X86) -> Vec<X86> {
 
 fn lower_conditionals(prog: X86) -> X86 {
     match prog {
-        X86::Define(name, vars, mut instrs) => {
+        X86::DefineWithStackSize(name, stack_size, mut instrs) => {
             instrs = instrs.iter().flat_map(|i| lower_if(i.clone())).collect();
 
-            return X86::Define(name, vars, instrs);
+            return X86::DefineWithStackSize(name, stack_size, instrs);
         },
-        X86::Prog(mut defs, mut instrs, vars) => {
+        X86::ProgWithStackSize(mut defs, mut instrs, stack_size) => {
             instrs = instrs.iter().flat_map(|i| lower_if(i.clone())).collect();
             defs = defs.iter().map(|d| lower_conditionals(d.clone())).collect();
             
-            return X86::Prog(defs, instrs, vars);
+            return X86::ProgWithStackSize(defs, instrs, stack_size);
         }
         _ => panic!("lower_conditionals: not top-level Prog"),
     }
@@ -715,19 +723,21 @@ fn patch_single_instr(instr: X86) -> Vec<X86> {
 
 fn patch_instructions(prog: X86) -> X86 {
     match prog {
-        X86::Define(name, vars, mut instrs) => {
+        X86::DefineWithStackSize(name, stack_size, mut instrs) => {
             let patched_instrs = 
                 instrs.iter().flat_map(|i| patch_single_instr(i.clone())).collect();
 
-            return X86::Define(name, vars, patched_instrs);
+            return X86::DefineWithStackSize(name, 
+                                            stack_size, 
+                                            patched_instrs);
         },
-        X86::Prog(mut defs, instrs, vars) => {
+        X86::ProgWithStackSize(mut defs, instrs, stack_size) => {
             let patched_instrs = 
                 instrs.iter().flat_map(|i| patch_single_instr(i.clone())).collect();
 
             defs = defs.iter().map(|d| patch_instructions(d.clone())).collect();
 
-            return X86::Prog(defs, patched_instrs, vars);
+            return X86::ProgWithStackSize(defs, patched_instrs, stack_size);
         },
         _ => panic!("patch_instructions: not top-level Prog"),
     }
@@ -813,18 +823,19 @@ fn print_x86(prog: X86) -> String {
     }
 
     let mut instrs_str = match prog {
-        X86::Define(name, vars, instrs) => {
+        X86::DefineWithStackSize(name, stack_size, instrs) => {
+            let stack_size = 8 * stack_size;
             let prelude = format!("{}:
     push rbp
     mov rbp, rsp
-{}", name, save_callee_save_regs);
-            // TODO: save callee-save regs
+{}
+    sub rsp, {}\n", name, save_callee_save_regs, stack_size);
             let postlude = format!("    mov rdi, rax
     add rsp, {}
 {}
     mov rsp, rbp
     pop rbp
-    ret", 0,                     // TODO: fix with stack-size
+    ret\n", stack_size,
                                    restore_callee_save_regs
             );
 
@@ -836,7 +847,8 @@ fn print_x86(prog: X86) -> String {
             instrs_str.push_str(&postlude[..]);
             instrs_str
         },
-        X86::Prog(defs, instrs, vars) => {
+        X86::ProgWithStackSize(defs, instrs, stack_size) => {
+            let stack_size = 8 * stack_size;
             let mut defs_str = String::new();
             for def in defs {
                 defs_str.push_str(&print_x86(def)[..]);
@@ -847,14 +859,15 @@ global main
 main:
     push rbp
     mov rbp, rsp
-{}", save_callee_save_regs);
-            // TODO: save/restore registers
+{}
+    sub rsp, {}\n", save_callee_save_regs, stack_size);
             let postlude = format!("    mov rdi, rax
     call print_int
+    add rsp, {}
 {}
     mov rsp, rbp
     pop rbp
-    ret\n", restore_callee_save_regs);
+    ret\n", stack_size, restore_callee_save_regs);
             let mut instrs_str = String::from(prelude);
             for i in instrs {
                 instrs_str.push_str(&print_instr(i));
