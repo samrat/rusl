@@ -36,7 +36,8 @@ enum CC {
 
 #[derive(Debug, Clone)]
 enum Reg {
-    RAX, RBX, RBP, RCX, RDX, RDI, RSI, R8, R9,
+    RAX, RBX, RBP, RCX, RDX, RDI, RSI,
+    R8, R9, R10, R11, R12, R13, R14, R15,
 }
 
 #[derive(Debug, Clone)]
@@ -84,7 +85,8 @@ enum X86 {
     Label(String),
 }
 
-
+const callee_save_regs : [Reg;4] =
+    [Reg::RBX, Reg::R12, Reg::R13, Reg::R14];
 
 // uniquify variable names. This function simply adds a monotonically
 // increasing counter(VAR_COUNTER) to each and every variable.
@@ -701,26 +703,32 @@ fn patch_instructions(prog: X86) -> X86 {
 }
 
 
-fn display_reg(reg: Reg) -> String {
+fn display_reg(reg: &Reg) -> String {
     match reg {
-        Reg::RAX => "rax",
-        Reg::RBX => "rbx",
-        Reg::RBP => "rbp",
-        Reg::RDX => "rdx",
-        Reg::RCX => "rcx",
-        Reg::RDI => "rdi",
-        Reg::RSI => "rsi",
-        Reg::R8 => "r8",
-        Reg::R9 => "r9",
+        &Reg::RAX => "rax",
+        &Reg::RBX => "rbx",
+        &Reg::RBP => "rbp",
+        &Reg::RDX => "rdx",
+        &Reg::RCX => "rcx",
+        &Reg::RDI => "rdi",
+        &Reg::RSI => "rsi",
+        &Reg::R8 => "r8",
+        &Reg::R9 => "r9",
+        &Reg::R10 => "r10",
+        &Reg::R11 => "r11",
+        &Reg::R12 => "r12",
+        &Reg::R13 => "r13",
+        &Reg::R14 => "r14",
+        &Reg::R15 => "r15",
     }.to_string()
 }
 
 fn print_x86_arg(arg: X86Arg) -> String {
     match arg {
-        X86Arg::Reg(r) => format!("{}", display_reg(r)),
+        X86Arg::Reg(r) => format!("{}", display_reg(&r)),
         X86Arg::Imm(n) => format!("{}", n),
         X86Arg::RegOffset(r, offset) => format!("QWORD [{}{}]", 
-                                                display_reg(r), offset),
+                                                display_reg(&r), offset),
         _ => panic!("invalid arg type"),
     }
 }
@@ -762,12 +770,23 @@ fn print_instr(instr: X86) -> String {
 }
 
 fn print_x86(prog: X86) -> String {
+    let mut save_callee_save_regs = String::new();
+    for r in callee_save_regs.iter() {
+        save_callee_save_regs.push_str(&format!("    push {}\n",
+                                                display_reg(r)));
+    }
+    let mut restore_callee_save_regs = String::new();
+    for r in callee_save_regs.iter().rev() {
+        restore_callee_save_regs.push_str(&format!("    pop {}\n",
+                                                   display_reg(r)));
+    }
 
     let mut instrs_str = match prog {
         X86::Define(name, vars, instrs) => {
             let prelude = format!("{}:
     push rbp
-    mov rbp, rsp\n", name);
+    mov rbp, rsp
+{}", name, save_callee_save_regs);
             // TODO: save callee-save regs
             let postlude = format!("    mov rdi, rax
     add rsp, {}
@@ -775,7 +794,7 @@ fn print_x86(prog: X86) -> String {
     mov rsp, rbp
     pop rbp
     ret", 0,                     // TODO: fix with stack-size
-                                   "; restore callee-save regs"
+                                   restore_callee_save_regs
             );
 
             let mut instrs_str = String::from(prelude);
@@ -791,24 +810,25 @@ fn print_x86(prog: X86) -> String {
             for def in defs {
                 defs_str.push_str(&print_x86(def)[..]);
             }
-            let prelude = "section .text
+            let prelude = format!("section .text
 extern print_int
 global main
 main:
     push rbp
-    mov rbp, rsp\n";
+    mov rbp, rsp
+{}", save_callee_save_regs);
             // TODO: save/restore registers
-            let postlude = "    mov rdi, rax
+            let postlude = format!("    mov rdi, rax
     call print_int
-
+{}
     mov rsp, rbp
     pop rbp
-    ret\n";
+    ret\n", restore_callee_save_regs);
             let mut instrs_str = String::from(prelude);
             for i in instrs {
                 instrs_str.push_str(&print_instr(i));
             }
-            instrs_str.push_str(postlude);
+            instrs_str.push_str(&postlude[..]);
             instrs_str.push_str(&defs_str[..]);
             instrs_str
         },
