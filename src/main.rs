@@ -19,7 +19,6 @@ mod anf;
 
 use util::get_unique_varname;
 
-use lexer::Token;
 use lexer::LexerState;
 
 use parser::{SExpr, CC};
@@ -101,19 +100,19 @@ enum X86 {
     Label(String),
 }
 
-const callee_save_regs : [Reg;5] =
+const CALLEE_SAVE_REGS : [Reg;5] =
     [Reg::RBX, Reg::R12, Reg::R13, Reg::R14, Reg::R15];
-const caller_save_regs : [Reg;8] =
+const CALLER_SAVE_REGS : [Reg;8] =
     [Reg::RDX, Reg::RCX, Reg::RSI, Reg::RDI, 
      Reg::R8, Reg::R9, Reg::R10, Reg::R11];
 // order of registers in which to place first 6 arguments
-const arg_reg_order : [Reg; 6] = [Reg::RDI,
+const ARG_REG_ORDER : [Reg; 6] = [Reg::RDI,
                                   Reg::RSI,
                                   Reg::RDX,
                                   Reg::RCX,
                                   Reg::R8,
                                   Reg::R9];
-const regs : [Reg;13] = [
+const REGS : [Reg;13] = [
     // callee-save
     Reg::RBX, Reg::R12, Reg::R13, Reg::R14, Reg::R15,
 
@@ -258,7 +257,7 @@ fn flat_to_px86(instr: Flat) -> Vec<X86> {
                         let mut instrs = vec![];
 
                         // push caller-save-regs
-                        for r in caller_save_regs.iter() {
+                        for r in CALLER_SAVE_REGS.iter() {
                             instrs.push(X86::Push(r.clone()));
                         }
 
@@ -266,7 +265,7 @@ fn flat_to_px86(instr: Flat) -> Vec<X86> {
                         // push args
                         for (i, arg) in args.iter().map(|a| flat_arg_type(a)).enumerate() {
                             instrs.push(
-                                X86::Mov(X86Arg::Reg(arg_reg_order[i].clone()),
+                                X86::Mov(X86Arg::Reg(ARG_REG_ORDER[i].clone()),
                                          arg)
                             );
                         }
@@ -276,7 +275,7 @@ fn flat_to_px86(instr: Flat) -> Vec<X86> {
                         ]);
 
                         // pop caller-save regs
-                        for r in caller_save_regs.iter().rev() {
+                        for r in CALLER_SAVE_REGS.iter().rev() {
                             instrs.push(X86::Pop(r.clone()));
                         }
 
@@ -344,7 +343,7 @@ fn select_instructions(flat_prog: FlatResult) -> X86 {
             for (i, arg) in args.iter().enumerate() {
                 move_args.push(
                     X86::Mov(X86Arg::Var(arg.clone()), 
-                             X86Arg::Reg(arg_reg_order[i].clone()))
+                             X86Arg::Reg(ARG_REG_ORDER[i].clone()))
                 );
             }
             
@@ -476,8 +475,11 @@ fn get_live_after_sets(mut instrs: Vec<X86>, lives: HashSet<String>)
                     }
                 };
 
+                let cond_vars : HashSet<_> = cond_vars.iter().cloned().collect();
+
                 let mut live = lives.clone();
                 live = live.union(&lives).cloned().collect();
+                live = live.union(&cond_vars).cloned().collect();
                 live = live.union(&thn_lives).cloned().collect();
                 live = live.union(&els_lives).cloned().collect();
 
@@ -491,7 +493,7 @@ fn get_live_after_sets(mut instrs: Vec<X86>, lives: HashSet<String>)
             },
 
             _ => {
-                let (all_vars, read_vars, written_vars) =
+                let (_, read_vars, written_vars) =
                     instruction_rw(instr.clone());
                 let mut live = live_of_next.clone();
                 let written_vars_set : HashSet<_> = 
@@ -541,7 +543,7 @@ fn compute_live_intervals(instrs: Vec<X86>, live_sets: Vec<HashSet<String>>,
     let instr_live_sets : Vec<_> = instrs.iter().zip(live_sets).collect();
     for (instr, live_set) in instr_live_sets {
         match (instr.clone(), live_set.clone()) {
-            (X86::IfWithLives(cnd, thns, thn_lives,
+            (X86::IfWithLives(_, thns, thn_lives,
                               elss, els_lives), _) => {
                 compute_live_intervals(thns.clone(), thn_lives, live_intervals, line_num);
                 compute_live_intervals(elss.clone(), els_lives, live_intervals, line_num);
@@ -550,7 +552,7 @@ fn compute_live_intervals(instrs: Vec<X86>, live_sets: Vec<HashSet<String>>,
             (_, _) => {
                 for v in live_set {
                     match live_intervals.get(&v) {
-                        Some(&(start, end)) => {
+                        Some(&(start, _)) => {
                             live_intervals.insert(v, (start, line_num));
                         },
                         None => {
@@ -575,12 +577,11 @@ fn allocate_registers(live_intervals: HashMap<String, (i32, i32)>)
     live_intervals_vec.sort_by_key(|interval| (interval.clone().1).0);
 
     let mut mapping : HashMap<String, i32> = HashMap::new();
-    let mut free : Vec<i32> = (0..regs.len()).map(|i| i as i32).collect();
-    let mut alloc : HashSet<i32> = HashSet::new();
+    let mut free : Vec<i32> = (0..REGS.len()).map(|i| i as i32).collect();
     let mut active_intervals : HashSet<(String, (i32, i32))> = HashSet::new();
     for (v, (start, end)) in live_intervals_vec.clone() {
-        // clear done intervals from alloc, and free registers
-        // allocated to them
+        // clear done intervals from active_intervals, and free
+        // registers allocated to them
         for (a, (astart, aend)) in active_intervals.clone() {
             if aend < start {
                 active_intervals.remove(&(a.clone(), (astart, aend)));
@@ -616,7 +617,7 @@ fn assign_homes_to_op2(locs: &HashMap<String, X86Arg>,
         },
         (_, X86Arg::Var(s)) =>
             (dest, locs.get(&s).unwrap().clone()),
-        (X86Arg::Reg(reg), _) =>
+        (X86Arg::Reg(_), _) =>
             (dest, src) ,
         _ => panic!("unreachable"),
     }
@@ -629,7 +630,7 @@ fn assign_homes_to_instrs(instrs: Vec<X86>, locs: HashMap<String, X86Arg>) -> Ve
     let mut new_instrs = vec![];
     for i in instrs {
         match i {
-            X86::IfWithLives(cnd, thn, thn_lives, els, els_lives) => {
+            X86::IfWithLives(cnd, thn, _, els, _) => {
                 let new_cnd = match *cnd {
                     x => match x {
                         // https://github.com/rust-lang/rust/issues/16223
@@ -700,7 +701,7 @@ fn decide_locs(vars: &Vec<String>, instrs: &Vec<X86>,
         locs.insert(
             var.clone(),
             match reg_alloc.get(&var) {
-                Some(reg) => X86Arg::Reg(regs[reg.clone() as usize].clone()),
+                Some(reg) => X86Arg::Reg(REGS[reg.clone() as usize].clone()),
                 None => {
                     stack_size += 1;
                     X86Arg::RegOffset(Reg::RBP, stack_size * -8)
@@ -836,7 +837,7 @@ fn patch_single_instr(instr: X86) -> Vec<X86> {
 
 fn patch_instructions(prog: X86) -> X86 {
     match prog {
-        X86::DefineWithStackSize(name, stack_size, mut instrs) => {
+        X86::DefineWithStackSize(name, stack_size, instrs) => {
             let patched_instrs = 
                 instrs.iter().flat_map(|i| patch_single_instr(i.clone())).collect();
 
@@ -888,7 +889,7 @@ fn print_x86_arg(arg: X86Arg) -> String {
     }
 }
 
-fn print_CC(cc: CC) -> String {
+fn print_cc(cc: CC) -> String {
     match cc {
         CC::E => "e", 
         CC::L => "l", 
@@ -910,13 +911,13 @@ fn print_instr(instr: X86) -> String {
                                         print_x86_arg(left), 
                                         print_x86_arg(right)),
         X86::JmpIf(cc, label) => format!("j{} {}",
-                                         print_CC(cc),
+                                         print_cc(cc),
                                          label),
         X86::Jmp(label) => format!("jmp {}", label),
         X86::Label(label) => format!("{}:", label),
         X86::Call(label) => format!("call {}", label),
         X86::Set(X86Arg::Reg(r), cc) =>
-            format!("set{} {}", print_CC(cc), display_reg(&r)),
+            format!("set{} {}", print_cc(cc), display_reg(&r)),
         X86::MovZx(dest, src) => format!("movzx {}, {}",
                                          print_x86_arg(dest),
                                          print_x86_arg(src)),
@@ -934,17 +935,17 @@ fn print_instr(instr: X86) -> String {
 
 fn print_x86(prog: X86) -> String {
     let mut save_callee_save_regs = String::new();
-    for r in callee_save_regs.iter() {
+    for r in CALLEE_SAVE_REGS.iter() {
         save_callee_save_regs.push_str(&format!("    push {}\n",
                                                 display_reg(r)));
     }
     let mut restore_callee_save_regs = String::new();
-    for r in callee_save_regs.iter().rev() {
+    for r in CALLEE_SAVE_REGS.iter().rev() {
         restore_callee_save_regs.push_str(&format!("    pop {}\n",
                                                    display_reg(r)));
     }
 
-    let mut instrs_str = match prog {
+    let instrs_str = match prog {
         X86::DefineWithStackSize(name, stack_size, instrs) => {
             let stack_size = 8 * stack_size;
             let prelude = format!("{}:
