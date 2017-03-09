@@ -1,4 +1,5 @@
 #![feature(slice_patterns)]
+#![feature(box_syntax)]
 
 use std::io;
 use std::collections::HashMap;
@@ -80,6 +81,8 @@ enum X86 {
                   Vec<String>,  // main-vars
                   Vec<HashSet<String>> // live-sets
     ),
+
+    Call(String),
     JmpIf(CC, String),
     Jmp(String),
     Label(String),
@@ -87,6 +90,12 @@ enum X86 {
 
 const callee_save_regs : [Reg;4] =
     [Reg::RBX, Reg::R12, Reg::R13, Reg::R14];
+const arg_reg_order : [Reg; 6] = [Reg::RDI,
+                                  Reg::RSI,
+                                  Reg::RDX,
+                                  Reg::RCX,
+                                  Reg::R8,
+                                  Reg::R9];
 
 // uniquify variable names. This function simply adds a monotonically
 // increasing counter(VAR_COUNTER) to each and every variable.
@@ -138,17 +147,17 @@ fn uniquify(mapping: &mut HashMap<String, String>, expr: SExpr)
 }
 
 
-fn flat_arg_type(v: Flat) -> X86Arg {
+fn flat_arg_type(v: &Flat) -> X86Arg {
     match v {
-        Flat::Symbol(name) => X86Arg::Var(name),
-        Flat::Number(n) => X86Arg::Imm(n),
-        Flat::Bool(b) => {
+        &Flat::Symbol(ref name) => X86Arg::Var(name.clone()),
+        &Flat::Number(n) => X86Arg::Imm(n),
+        &Flat::Bool(b) => {
             match b {
                 true => X86Arg::Imm(1),
                 false => X86Arg::Imm(0),
             }
         },
-        _ => {
+        &_ => {
             error!("flat_arg_type: compound expression");
             process::exit(0);
         },
@@ -184,13 +193,31 @@ fn flat_to_px86(instr: Flat) -> Vec<X86> {
                                 };
                                 return vec![
                                     X86::Mov(X86Arg::Var(dest.clone()),
-                                             flat_arg_type(arg1.clone())),
+                                             flat_arg_type(arg1)),
                                     X86::Add(X86Arg::Var(dest),
-                                             flat_arg_type(arg2.clone()))
+                                             flat_arg_type(arg2))
                                 ];
                             },
                             _ => panic!("primitive not defined"),
                         }
+                    },
+                    Flat::App(f, args) => {
+                        let mut instrs = vec![];
+                        // TODO: if more than 6 args, spill args to stack
+                        // push args
+                        for (i, arg) in args.iter().map(|a| flat_arg_type(a)).enumerate() {
+                            instrs.push(
+                                X86::Mov(X86Arg::Reg(arg_reg_order[i].clone()),
+                                         arg)
+                            );
+                        }
+
+                        instrs.extend_from_slice(&[
+                            X86::Call(f),
+                            X86::Mov(X86Arg::Var(dest), X86Arg::Reg(Reg::RAX))
+                        ]);
+
+                        return instrs;
                     },
                     _ => {
                         println!("{:?}", x);
@@ -200,7 +227,7 @@ fn flat_to_px86(instr: Flat) -> Vec<X86> {
             }
         },
         Flat::Return(v) => {
-            let val = flat_arg_type(*v);
+            let val = flat_arg_type(&*v);
             return vec![X86::Mov(X86Arg::Reg(Reg::RAX), 
                                  val)]
         },
@@ -222,8 +249,8 @@ fn flat_to_px86(instr: Flat) -> Vec<X86> {
                 let mut i_instrs = flat_to_px86(i);
                 els_instrs.append(&mut i_instrs);
             }
-            return vec![X86::If(Box::new(X86::EqP(flat_arg_type(*eq_left),
-                                                  flat_arg_type(*eq_right))),
+            return vec![X86::If(Box::new(X86::EqP(flat_arg_type(&*eq_left),
+                                                  flat_arg_type(&*eq_right))),
                                 thn_instrs,
                                 els_instrs)];
         },
@@ -235,15 +262,11 @@ fn flat_to_px86(instr: Flat) -> Vec<X86> {
 // is like x86 but with if's and temporaries. It is also
 // "unpatched" (see `patch_instructions`)
 fn select_instructions(flat_prog: FlatResult) -> X86 {
-    let arg_reg_order = vec![Reg::RDI,
-                             Reg::RSI,
-                             Reg::RDX, 
-                             Reg::RCX, 
-                             Reg::R8, 
-                             Reg::R9];
+
     match flat_prog {
         FlatResult::Define(name, args, assigns, mut vars) =>
         {
+            // TODO: if more than 6 args, spill args to stack
             let mut move_args = vec![];
             for (i, arg) in args.iter().enumerate() {
                 move_args.push(
@@ -295,7 +318,7 @@ fn instruction_rw(instr: X86) -> (Vec<String>, Vec<String>, Vec<String>) {
                     vec![],
                     vec![dest]);
         },
-        X86::Mov(X86Arg::Reg(Reg::RAX), X86Arg::Var(src)) => {
+        X86::Mov(X86Arg::Reg(_), X86Arg::Var(src)) => {
             return (vec![src.clone()],
                     vec![src],
                     vec![])
@@ -325,6 +348,7 @@ fn instruction_rw(instr: X86) -> (Vec<String>, Vec<String>, Vec<String>) {
                     vec![dest.clone()],
                     vec![dest]);
         },
+        X86::Call(_) => return (vec![], vec![], vec![]),
         _ => panic!("NYI: {:?}", instr),
     }
 }
@@ -542,6 +566,9 @@ fn assign_homes_to_instrs(instrs: Vec<X86>, locs: HashMap<String, X86Arg>) -> Ve
                 let (new_dest, new_src) = assign_homes_to_op2(&locs, src, dest);
                 new_instrs.push(X86::Add(new_dest, new_src))
             },
+            X86::Call(_) => {
+                new_instrs.push(i);
+            },
             _ => panic!("NYI: {:?}", i),
         }
     };
@@ -678,6 +705,10 @@ fn patch_single_instr(instr: X86) -> Vec<X86> {
                           X86Arg::Reg(Reg::RAX))
             ]
         },
+        X86::Cmp(X86Arg::Imm(i), right) => {
+            vec![X86::Mov(X86Arg::Reg(Reg::RAX), X86Arg::Imm(i)),
+                 X86::Cmp(X86Arg::Reg(Reg::RAX), right)]
+        }
         _ => vec![instr],
     }
 }
@@ -759,7 +790,7 @@ fn print_instr(instr: X86) -> String {
                                          label),
         X86::Jmp(label) => format!("jmp {}", label),
         X86::Label(label) => format!("{}:", label),
-
+        X86::Call(label) => format!("call {}", label),
         _ => panic!("invalid op"),
     };
 
@@ -876,7 +907,7 @@ fn read_input() -> io::Result<()> {
     let homes_assigned = assign_homes(instrs);
     let ifs_lowered = lower_conditionals(homes_assigned);
     let patched = patch_instructions(ifs_lowered);
-    println!("{:?}", patched);
+    // println!("{:?}", patched);
 
     println!("{}", print_x86(patched));
 

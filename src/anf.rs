@@ -10,6 +10,7 @@ pub enum Flat {
     Return(Box<Flat>),
     If(Box<Flat>, Vec<Flat>, Vec<Flat>),
     EqP(Box<Flat>, Box<Flat>),
+    App(String, Vec<Flat>),
     Prim(String, Vec<Flat>),
 }
 
@@ -186,7 +187,33 @@ pub fn flatten(expr: SExpr) -> FlatResult {
                                                     e1_assigns,
                                                     e1_vars);
                         },
-                        &_ => panic!("NYI!"),
+                        f => {
+                            let app_temp = get_unique_varname("tmp");
+
+                            let mut flat_args = vec![];
+                            let mut args_assigns : Vec<Flat> = vec![];
+                            let mut args_vars = vec![];
+
+                            for arg in args {
+                                let (flat_arg, arg_assigns, arg_vars) = 
+                                    match flatten(arg) {
+                                        FlatResult::Flat(flat, assigns, vars) => (flat, assigns, vars),
+                                        _ => panic!("unreachable"),
+                                    };
+                                flat_args.push(flat_arg);
+                                args_assigns.extend_from_slice(&arg_assigns);
+                                args_vars.extend_from_slice(&arg_vars);
+                            }
+
+                            args_assigns.extend_from_slice(&[
+                                Flat::Assign(app_temp.to_string(),
+                                             box Flat::App(f.to_string(), flat_args))
+                            ]);
+
+                            return FlatResult::Flat(Flat::Symbol(app_temp),
+                                                    args_assigns,
+                                                    args_vars);
+                        },
                     }
                 },
                 _ => panic!("not a function!"),
