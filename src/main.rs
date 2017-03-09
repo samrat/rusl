@@ -532,22 +532,19 @@ fn allocate_registers(live_intervals: HashMap<String, (i32, i32)>)
     for (v, live_interval) in live_intervals {
         live_intervals_vec.push((v, live_interval));
     }
-    live_intervals_vec.sort_by_key(|interval| interval.clone().0);
+    live_intervals_vec.sort_by_key(|interval| (interval.clone().1).0);
+
     let mut mapping : HashMap<String, i32> = HashMap::new();
     let mut free : Vec<i32> = (0..regs.len()).map(|i| i as i32).collect();
     let mut alloc : HashSet<i32> = HashSet::new();
-    let mut active_intervals : Vec<(String, (i32, i32))> = vec![];
-
+    let mut active_intervals : HashSet<(String, (i32, i32))> = HashSet::new();
     for (v, (start, end)) in live_intervals_vec.clone() {
         // clear done intervals from alloc, and free registers
         // allocated to them
-        for (i, &(ref a, (astart, aend))) in active_intervals.clone().iter().enumerate() {
+        for (a, (astart, aend)) in active_intervals.clone() {
             if aend < start {
-                if active_intervals.len() > 0 {
-                    active_intervals.remove(i);
-                }
-
-                match mapping.get(a) {
+                active_intervals.remove(&(a.clone(), (astart, aend)));
+                match mapping.get(&a) {
                     Some(reg) => {
                         free.push(reg.clone());
                     },
@@ -562,7 +559,7 @@ fn allocate_registers(live_intervals: HashMap<String, (i32, i32)>)
         }
 
         // add current to active_intervals
-        active_intervals.push((v.clone(), (start, end)));
+        active_intervals.insert((v.clone(), (start, end)));
     }
     return mapping;
 }
