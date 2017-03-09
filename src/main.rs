@@ -49,6 +49,9 @@ enum X86Arg {
     Var(String),     // pseudo-x86
 }
 
+
+// TODO: It might be a good idea to pull the constructors pertaining
+// to pseudo-x86 into a separate datatype.
 #[derive(Debug, Clone)]
 enum X86 {
     Mov(X86Arg, X86Arg),
@@ -96,14 +99,26 @@ enum X86 {
     Label(String),
 }
 
-const callee_save_regs : [Reg;4] =
-    [Reg::RBX, Reg::R12, Reg::R13, Reg::R14];
+const callee_save_regs : [Reg;5] =
+    [Reg::RBX, Reg::R12, Reg::R13, Reg::R14, Reg::R15];
+const caller_save_regs : [Reg;8] =
+    [Reg::RDX, Reg::RCX, Reg::RSI, Reg::RDI, 
+     Reg::R8, Reg::R9, Reg::R10, Reg::R11];
+// order of registers in which to place first 6 arguments
 const arg_reg_order : [Reg; 6] = [Reg::RDI,
                                   Reg::RSI,
                                   Reg::RDX,
                                   Reg::RCX,
                                   Reg::R8,
                                   Reg::R9];
+const regs : [Reg;13] = [
+    // callee-save
+    Reg::RBX, Reg::R12, Reg::R13, Reg::R14, Reg::R15,
+
+    // caller-save
+    Reg::RDX, Reg::RCX, Reg::RSI, Reg::RDI, 
+    Reg::R8, Reg::R9, Reg::R10, Reg::R11
+];
 
 // uniquify variable names. This function simply adds a monotonically
 // increasing counter(VAR_COUNTER) to each and every variable.
@@ -491,7 +506,7 @@ fn allocate_registers(live_intervals: HashMap<String, (i32, i32)>)
     }
     live_intervals_vec.sort_by_key(|interval| interval.clone().0);
     let mut mapping : HashMap<String, i32> = HashMap::new();
-    let mut free = vec![1,2];   // TODO: FIXME
+    let mut free : Vec<i32> = (0..regs.len()).map(|i| i as i32).collect();
     let mut alloc : HashSet<i32> = HashSet::new();
     let mut active_intervals : Vec<(String, (i32, i32))> = vec![];
 
@@ -587,8 +602,6 @@ fn assign_homes_to_instrs(instrs: Vec<X86>, locs: HashMap<String, X86Arg>) -> Ve
 fn decide_locs(vars: &Vec<String>, instrs: &Vec<X86>, 
                live_sets: Vec<HashSet<String>>) 
                -> (HashMap<String, X86Arg>, i32) {
-    let regs = vec![Reg::RBX, Reg::RDX, Reg::RCX];
-
     let mut live_intervals = HashMap::new();
     compute_live_intervals(instrs.clone(),
                            live_sets, 
