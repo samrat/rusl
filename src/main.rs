@@ -53,7 +53,10 @@ enum X86Arg {
 enum X86 {
     Mov(X86Arg, X86Arg),
     Add(X86Arg, X86Arg),
+    Neg(X86Arg),
     Cmp(X86Arg, X86Arg),
+    Push(Reg),
+    Pop(Reg),
     Set(X86Arg, CC),
     MovZx(X86Arg, X86Arg),
     EqP(X86Arg, X86Arg),          // pseudo-X86
@@ -233,11 +236,31 @@ fn flat_to_px86(instr: Flat) -> Vec<X86> {
                                              flat_arg_type(arg2))
                                 ];
                             },
+                            "-" => {
+                                let arg = match &args[..] {
+                                    &[ref arg] => arg,
+                                    _ => {
+                                        error!("`-` expects 1 argument");
+                                        process::exit(0);
+                                    },
+                                };
+                                return vec![
+                                    X86::Mov(X86Arg::Var(dest.clone()),
+                                             flat_arg_type(arg)),
+                                    X86::Neg(X86Arg::Var(dest.clone()))
+                                ];
+                            }
                             _ => panic!("primitive not defined"),
                         }
                     },
                     Flat::App(f, args) => {
                         let mut instrs = vec![];
+
+                        // push caller-save-regs
+                        for r in caller_save_regs.iter() {
+                            instrs.push(X86::Push(r.clone()));
+                        }
+
                         // TODO: if more than 6 args, spill args to stack
                         // push args
                         for (i, arg) in args.iter().map(|a| flat_arg_type(a)).enumerate() {
@@ -249,6 +272,14 @@ fn flat_to_px86(instr: Flat) -> Vec<X86> {
 
                         instrs.extend_from_slice(&[
                             X86::Call(f),
+                        ]);
+
+                        // pop caller-save regs
+                        for r in caller_save_regs.iter().rev() {
+                            instrs.push(X86::Pop(r.clone()));
+                        }
+
+                        instrs.extend_from_slice(&[
                             X86::Mov(X86Arg::Var(dest), X86Arg::Reg(Reg::RAX))
                         ]);
 
@@ -399,7 +430,15 @@ fn instruction_rw(instr: X86) -> (Vec<String>, Vec<String>, Vec<String>) {
                     vec![dest.clone()],
                     vec![dest]);
         },
-        X86::Call(_) => return (vec![], vec![], vec![]),
+        X86::Push(_) | X86::Pop(_) | X86::Call(_) =>
+            return (vec![], vec![], vec![]),
+        X86::Neg(X86Arg::Var(n)) => {
+            return (vec![n.clone()],
+                    vec![n.clone()],
+                    vec![n.clone()]);
+        },
+
+
         _ => panic!("NYI: {:?}", instr),
     }
 }
@@ -626,7 +665,16 @@ fn assign_homes_to_instrs(instrs: Vec<X86>, locs: HashMap<String, X86Arg>) -> Ve
                     assign_homes_to_op2(&locs, left, right);
                 new_instrs.push(X86::Cmp(new_left, new_right))
             },
+            X86::Neg(n) => {
+                let new_n = match n {
+                    X86Arg::Var(v) => locs.get(&v).unwrap().clone(),
+                    _ => n,
+                };
+
+                new_instrs.push(X86::Neg(new_n))
+            }
             X86::Set(X86Arg::Reg(_), _) |
+            X86::Push(_) | X86::Pop(_) |
             X86::Call(_) => {
                 new_instrs.push(i);
             },
@@ -770,6 +818,13 @@ fn patch_single_instr(instr: X86) -> Vec<X86> {
                           X86Arg::Reg(Reg::RAX))
             ]
         },
+        X86::Neg(X86Arg::RegOffset(Reg::RBP, offset)) => {
+            vec![X86::Mov(X86Arg::Reg(Reg::RAX),
+                          X86Arg::RegOffset(Reg::RBP, offset)),
+                 X86::Neg(X86Arg::Reg(Reg::RAX)),
+                 X86::Mov(X86Arg::RegOffset(Reg::RBP, offset),
+                          X86Arg::Reg(Reg::RAX))]
+        },
         X86::Cmp(X86Arg::Imm(i), right) => {
             vec![X86::Mov(X86Arg::Reg(Reg::RAX), X86Arg::Imm(i)),
                  X86::Cmp(X86Arg::Reg(Reg::RAX), right)]
@@ -864,6 +919,9 @@ fn print_instr(instr: X86) -> String {
         X86::MovZx(dest, src) => format!("movzx {}, {}",
                                          print_x86_arg(dest),
                                          print_x86_arg(src)),
+        X86::Neg(n) => format!("neg {}", print_x86_arg(n)),
+        X86::Push(r) => format!("push {}", display_reg(&r)),
+        X86::Pop(r) => format!("pop {}", display_reg(&r)),
         _ => panic!("invalid op: {:?}", instr),
     };
 
@@ -981,7 +1039,6 @@ fn read_input() -> io::Result<()> {
 
     let instrs = select_instructions(flattened);
     let instrs = uncover_live(instrs);
-
     let homes_assigned = assign_homes(instrs);
 
     let ifs_lowered = lower_conditionals(homes_assigned);
