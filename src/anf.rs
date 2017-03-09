@@ -36,6 +36,7 @@ pub fn flatten(expr: SExpr) -> FlatResult {
         SExpr::Bool(b) => FlatResult::Flat(Flat::Bool(b),
                                            vec![],
                                            vec![]),
+        SExpr::Tuple(t) => panic!("NYI"),
         SExpr::Let(bindings, body) => {
             let (flat_body, body_assigns, body_vars) = 
                 match flatten(*body) {

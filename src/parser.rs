@@ -22,6 +22,7 @@ pub enum SExpr {
     Define(String, Vec<String>, Box<SExpr>),
     Let(Vec<(String, SExpr)>, Box<SExpr>),
     If(Box<SExpr>, Box<SExpr>, Box<SExpr>),
+    Tuple(Vec<SExpr>),
     Cmp(CC, Box<SExpr>, Box<SExpr>),
     App(Box<SExpr>, Vec<SExpr>),
     Prog(Vec<SExpr>, Box<SExpr>),
@@ -37,7 +38,6 @@ fn unread(ls: &mut LexerState, tok: Token) {
         ls.tok_buf = Some(tok)
     }
 }
-
 
 
 fn get_list(ls: &mut LexerState) -> Vec<SExpr> {
@@ -130,6 +130,12 @@ pub fn get_ast(expr: &SExpr) -> SExpr {
                         }
                         return SExpr::Let(astified_bindings, Box::new(get_ast(&body)));  
                     },
+                &[SExpr::Symbol(ref k), _..] 
+                    if k == "tuple" => {
+                        let mut tuple_elts = elts[1..].to_vec();
+                        tuple_elts = tuple_elts.iter().map(|e| get_ast(e)).collect();
+                        return SExpr::Tuple(tuple_elts);
+                    },
                 &[SExpr::Symbol(ref cmp), ref left, ref right]
                     if (cmp == ">" || cmp == "<" || 
                         cmp == "<=" || cmp == ">=" ||
@@ -144,7 +150,7 @@ pub fn get_ast(expr: &SExpr) -> SExpr {
                         };
 
                         return SExpr::Cmp(cc, box left.clone(), box right.clone());
-                },
+                    },
                 &[ref f, _..] => {
                     let mut astified_args = vec![];
                     for arg in elts[1..].to_vec() {

@@ -131,6 +131,7 @@ fn uniquify(mapping: &mut HashMap<String, String>, expr: SExpr)
             SExpr::Symbol(mapping.get(&name).unwrap().to_string()),
         SExpr::Number(_) => expr,
         SExpr::Bool(_) => expr,
+        SExpr::Tuple(t) => panic!("NYI"),
         SExpr::Let(bindings, body) => {
             let mut new_bindings = vec![];
             for (k,v) in bindings {
@@ -1027,6 +1028,7 @@ fn read_input() -> io::Result<()> {
     let mut toplevel = vec![];
     let mut sexpr = read(&mut lexer);
     while sexpr != SExpr::EOF {
+        println!("{:?}", sexpr);
         toplevel.push(sexpr);
         sexpr = read(&mut lexer);
     }
