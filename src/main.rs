@@ -1,3 +1,5 @@
+#![feature(slice_patterns)]
+
 use std::io;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -171,14 +173,18 @@ fn flat_to_px86(instr: Flat) -> Vec<X86> {
                     Flat::Prim(f, args) => {
                         match &f[..] {
                             "+" => {
-                                // TODO: check arg count
-                                let arg1 = args[0].clone();
-                                let arg2 = args[1].clone();
+                                let (arg1, arg2) = match &args[..] {
+                                    &[ref arg1, ref arg2] => (arg1, arg2),
+                                    _ => {
+                                        error!("`+` expects 2 arguments");
+                                        process::exit(0);
+                                    },
+                                };
                                 return vec![
                                     X86::Mov(X86Arg::Var(dest.clone()),
-                                             flat_arg_type(arg1)),
+                                             flat_arg_type(arg1.clone())),
                                     X86::Add(X86Arg::Var(dest),
-                                             flat_arg_type(arg2))
+                                             flat_arg_type(arg2.clone()))
                                 ];
                             },
                             _ => panic!("primitive not defined"),

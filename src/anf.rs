@@ -135,7 +135,10 @@ pub fn flatten(expr: SExpr) -> FlatResult {
                 SExpr::Symbol(fname) => {
                     match &fname[..] {
                         "-" => {
-                            // TODO: check no. of args
+                            let arg1 = match &args[..] {
+                                &[ref arg1] => arg1,
+                                _ => panic!("Wrong no. of args to `-`: {:?}", args),
+                            };
                             let (flat_e, mut e_assigns, mut e_vars) =
                                 match flatten(args[0].clone()) {
                                     FlatResult::Flat(flat_e, mut e_assigns, mut e_vars) =>
@@ -152,14 +155,18 @@ pub fn flatten(expr: SExpr) -> FlatResult {
                                                     e_vars);
                         },
                         "+" => {
+                            let (arg1, arg2) = match &args[..] {
+                                &[ref arg1, ref arg2] => (arg1, arg2),
+                                _ => panic!("Wrong no. of args to `+`"),
+                            };
                             let (flat_e1, mut e1_assigns, mut e1_vars) = 
-                                match flatten(args[0].clone()) {
+                                match flatten(arg1.clone()) {
                                     FlatResult::Flat(flat_e1, mut e1_assigns, mut e1_vars) =>
                                         (flat_e1, e1_assigns, e1_vars),
                                     _ => panic!("unreachable"),
                                 };
                             let (flat_e2, mut e2_assigns, mut e2_vars) = 
-                                match flatten(args[1].clone()) {
+                                match flatten(arg2.clone()) {
                                     FlatResult::Flat(flat_e2, mut e2_assigns, mut e2_vars) =>
                                         (flat_e2, e2_assigns, e2_vars),
                                     _ => panic!("unreachable"),
