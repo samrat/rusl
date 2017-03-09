@@ -17,7 +17,8 @@ pub struct LexerState {
 
 fn is_valid_symbol_start(c: char) -> bool {
     // TODO: avoid allocatiing this in each call
-    let symbol_start_chars = vec!['+', '-', '*', '/', '#'];
+    let symbol_start_chars = vec!['+', '-', '*', '/', '#', '<', '>',
+                                  '='];
 
     let mut ret = false;
     if c.is_alphabetic() { ret = true; }
@@ -96,6 +97,7 @@ pub fn get_token(ls: &mut LexerState) -> Token {
                         ls.col += 1;
                         return Token::RParen
                     },
+
                     _ => panic!("line {}:{} unexpected char: {}", ls.line_num, ls.col, c),
                 }
             }

@@ -1,5 +1,5 @@
 use util::get_unique_varname;
-use parser::SExpr;
+use parser::{SExpr, CC};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Flat {
@@ -9,6 +9,7 @@ pub enum Flat {
     Assign(String, Box<Flat>),
     Return(Box<Flat>),
     If(Box<Flat>, Vec<Flat>, Vec<Flat>),
+    Cmp(CC, Box<Flat>, Box<Flat>),
     EqP(Box<Flat>, Box<Flat>),
     App(String, Vec<Flat>),
     Prim(String, Vec<Flat>),
@@ -131,6 +132,31 @@ pub fn flatten(expr: SExpr) -> FlatResult {
                                     cnd_vars);
                                    
         },
+        SExpr::Cmp(cc, left, right) => {
+            let (flat_left, mut left_assigns, mut left_vars) =
+                match flatten(*left) {
+                    FlatResult::Flat(flat, assigns, vars) => (flat, assigns, vars),
+                    _ => panic!("unreachable"),
+                };
+            let (flat_right, mut right_assigns, mut right_vars) =
+                match flatten(*right) {
+                    FlatResult::Flat(flat, assigns, vars) => (flat, assigns, vars),
+                    _ => panic!("unreachable"),
+                };
+            let cmp_temp = get_unique_varname("tmp");
+            left_assigns.append(&mut right_assigns);
+            left_assigns.extend_from_slice(&[
+                Flat::Assign(cmp_temp.clone(), box Flat::Cmp(cc, 
+                                                             box flat_left,
+                                                             box flat_right))
+            ]);
+            left_vars.append(&mut right_vars);
+            left_vars.push(cmp_temp.clone());
+            
+            return FlatResult::Flat(Flat::Symbol(cmp_temp),
+                                    left_assigns,
+                                    left_vars);
+        },
         SExpr::App(f, args) => {
             match *f {
                 SExpr::Symbol(fname) => {
@@ -209,6 +235,7 @@ pub fn flatten(expr: SExpr) -> FlatResult {
                                 Flat::Assign(app_temp.to_string(),
                                              box Flat::App(f.to_string(), flat_args))
                             ]);
+                            args_vars.extend_from_slice(&[app_temp.clone()]);
 
                             return FlatResult::Flat(Flat::Symbol(app_temp),
                                                     args_assigns,

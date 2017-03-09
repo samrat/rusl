@@ -6,6 +6,12 @@ use lexer::get_token;
 
 use log;
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum CC {
+    // condition codes
+    E, L, LE, G, GE,
+}
+
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub enum SExpr {
     Symbol(String),
@@ -16,6 +22,7 @@ pub enum SExpr {
     Define(String, Vec<String>, Box<SExpr>),
     Let(Vec<(String, SExpr)>, Box<SExpr>),
     If(Box<SExpr>, Box<SExpr>, Box<SExpr>),
+    Cmp(CC, Box<SExpr>, Box<SExpr>),
     App(Box<SExpr>, Vec<SExpr>),
     Prog(Vec<SExpr>, Box<SExpr>),
     EOF,
@@ -54,17 +61,17 @@ pub fn get_expr(ls: &mut LexerState) -> SExpr {
         Token::LParen => {
             return SExpr::List(get_list(ls));
         },
-        // TODO: show line num/column
-        Token::RParen => panic!("unmatched ')'"),
+        Token::RParen => panic!("line {}:{} unmatched ')'",
+                                ls.line_num, ls.col),
         Token::EOF => return SExpr::EOF,
     }
 }
 
-pub fn get_arg_names(args: Vec<SExpr>) -> Vec<String> {
+pub fn get_arg_names(args: &Vec<SExpr>) -> Vec<String> {
     let mut arg_names = vec![];
     for arg in args {
         match arg {
-            SExpr::Symbol(name) => arg_names.push(name),
+            &SExpr::Symbol(ref name) => arg_names.push(name.clone()),
             _ => {
                 error!("arg should be a Symbol");
                 process::exit(0);
@@ -75,82 +82,86 @@ pub fn get_arg_names(args: Vec<SExpr>) -> Vec<String> {
     return arg_names;
 }
 
-pub fn get_ast(expr: SExpr) -> SExpr {
+pub fn get_ast(expr: &SExpr) -> SExpr {
     match expr {
-        SExpr::Symbol(sym) => {
+        &SExpr::Symbol(ref sym) => {
             match &sym[..] {
                 "#f" => SExpr::Bool(false),
                 "#t" => SExpr::Bool(true),
-                _ => SExpr::Symbol(sym),
+                _ => SExpr::Symbol(sym.clone()),
             }
         },
-        SExpr::List(elts) =>
-            match elts[0].clone() {
-                SExpr::Symbol(sym) => {
-                    match &sym[..] {
-                        "define" => {
-                            match elts[1].clone() {
-                                SExpr::List(defelts) => {
-                                    match defelts[0].clone() {
-                                        SExpr::Symbol(name) => {
-                                            let args = get_arg_names(defelts[1..].to_vec());
-                                            return SExpr::Define(name, args,
-                                                                 Box::new(get_ast(elts[2].clone())));
-                                        },
-                                        _ => {
-                                            error!("function name should be a symbol");
-                                            process::exit(0);
-                                        },
-                                    }
-                                },
-                                _ => panic!("invalid define syntax"),
-                            }
+        &SExpr::List(ref elts) =>
+            match &elts[..] {
+                &[SExpr::Symbol(ref k), SExpr::List(ref defelts), ref body] 
+                    if k == "define" => {
+                    let ref name = defelts[0];
+                    let args = defelts[1..].to_vec();
+                    
+                    match name {
+                        &SExpr::Symbol(ref name) => {
+                            return SExpr::Define(name.clone(), get_arg_names(&args.to_vec()),
+                                                 Box::new(get_ast(body)));
                         },
-                        "if" => {
-                            return SExpr::If(Box::new(get_ast(elts[1].clone())),
-                                             Box::new(get_ast(elts[2].clone())),
-                                             Box::new(get_ast(elts[3].clone())));
-                        },
-                        "let" => {
-                            let bindings = match elts[1] {
-                                SExpr::List(ref bs) => bs,
-                                _ => panic!("let bindings"),
+                        _ => panic!("invalid function prototype"),
+                    }
+                },
+                &[SExpr::Symbol(ref k), ref cnd, ref thn, ref els] 
+                    if k == "if" => {
+                    return SExpr::If(Box::new(get_ast(cnd)),
+                                     Box::new(get_ast(thn)),
+                                     Box::new(get_ast(els)));
+                    },
+                &[SExpr::Symbol(ref k), SExpr::List(ref bindings), ref body]
+                    if k == "let" => {
+                        let mut astified_bindings = vec![];
+                        for bind_pair in bindings {
+                            let (key, val) = match bind_pair {
+                                // TODO: check length
+                                &SExpr::List(ref kv) => (kv[0].clone(), kv[1].clone()),
+                                _ => panic!("non-list in let-binding"),
                             };
 
-                            let mut astified_bindings = vec![];
-                            for bind_pair in bindings {
-                                let (key, val) = match bind_pair {
-                                    // TODO: check length
-                                    &SExpr::List(ref kv) => (kv[0].clone(), kv[1].clone()),
-                                    _ => panic!("non-list in let-binding"),
-                                };
+                            let keyname = match key {
+                                SExpr::Symbol(k) => k,
+                                _ => panic!("let binding key is not symbol"),
+                            };
+                            astified_bindings.push((keyname, get_ast(&val)));
+                        }
+                        return SExpr::Let(astified_bindings, Box::new(get_ast(&body)));  
+                    },
+                &[SExpr::Symbol(ref cmp), ref left, ref right]
+                    if (cmp == ">" || cmp == "<" || 
+                        cmp == "<=" || cmp == ">=" ||
+                        cmp == "=") => {
+                        let cc = match &cmp[..] {
+                            ">" => CC::G,
+                            "<" => CC::L,
+                            ">=" => CC::GE,
+                            "<=" => CC::LE,
+                            "=" => CC::E,
+                            &_ => panic!("NYI"),
+                        };
 
-                                let keyname = match key {
-                                    SExpr::Symbol(k) => k,
-                                    _ => panic!("let binding key is not symbol"),
-                                };
-                                astified_bindings.push((keyname, get_ast(val)));
-                            }
-                            return SExpr::Let(astified_bindings, Box::new(get_ast(elts[2].clone())));
-                        },
-                        _ => {
-                            let mut astified_args = vec![];
-                            for arg in elts[1..].to_vec() {
-                                astified_args.push(get_ast(arg));
-                            }
-
-                            return SExpr::App(Box::new(elts[0].clone()), astified_args);
-                        },
+                        return SExpr::Cmp(cc, box left.clone(), box right.clone());
+                },
+                &[ref f, _..] => {
+                    let mut astified_args = vec![];
+                    for arg in elts[1..].to_vec() {
+                        astified_args.push(get_ast(&arg));
                     }
-                }
-                _ => panic!("NYI"),
-            },
-        _ => expr,
+
+                    return SExpr::App(Box::new(f.clone()), astified_args);
+                },
+                &_ => panic!("NYI: {:?}", elts),
+            }
+        ,
+        &_ => expr.clone(),
     }
 }
 
 pub fn read(ls: &mut LexerState) -> SExpr {
-    return get_ast(get_expr(ls));
+    return get_ast(&get_expr(ls));
 }
 
 #[test]
