@@ -1,5 +1,5 @@
 [root]
-name = "schemers"
+name = "rusl"
 version = "0.1.0"
 dependencies = [
  "log 0.3.7 (registry+https://github.com/rust-lang/crates.io-index)",
