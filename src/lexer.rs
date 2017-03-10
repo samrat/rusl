@@ -3,7 +3,7 @@ pub enum Token {
     LParen,
     RParen,
     Symbol(String),
-    Number(i32),
+    Number(i64),
     EOF,
 }
 

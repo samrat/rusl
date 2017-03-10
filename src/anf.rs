@@ -4,14 +4,13 @@ use parser::{SExpr, CC};
 #[derive(Clone, Debug, PartialEq)]
 pub enum Flat {
     Symbol(String),
-    Number(i32),
+    Number(i64),
     Bool(bool),
     Tuple(Vec<Flat>),
     Assign(String, Box<Flat>),
     Return(Box<Flat>),
     If(Box<Flat>, Vec<Flat>, Vec<Flat>),
     Cmp(CC, Box<Flat>, Box<Flat>),
-    EqP(Box<Flat>, Box<Flat>),
     App(String, Vec<Flat>),
     Prim(String, Vec<Flat>),
 }
@@ -146,8 +145,7 @@ pub fn flatten(expr: SExpr) -> FlatResult {
                                                          Box::new(flat_thn))]);
             els_assigns.extend_from_slice(&[Flat::Assign(if_temp.clone(),
                                                          Box::new(flat_els))]);
-            let flat_if = Flat::If(Box::new(Flat::EqP(Box::new(flat_cnd),
-                                                      Box::new(Flat::Bool(true)))),
+            let flat_if = Flat::If(Box::new(flat_cnd),
                                    thn_assigns,
                                    els_assigns);
 

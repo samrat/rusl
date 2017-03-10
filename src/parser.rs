@@ -15,7 +15,7 @@ pub enum CC {
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub enum SExpr {
     Symbol(String),
-    Number(i32),
+    Number(i64),
     Bool(bool),
     List(Vec<SExpr>),
 
