@@ -6,6 +6,7 @@ pub enum Flat {
     Symbol(String),
     Number(i32),
     Bool(bool),
+    Tuple(Vec<Flat>),
     Assign(String, Box<Flat>),
     Return(Box<Flat>),
     If(Box<Flat>, Vec<Flat>, Vec<Flat>),
@@ -36,7 +37,33 @@ pub fn flatten(expr: SExpr) -> FlatResult {
         SExpr::Bool(b) => FlatResult::Flat(Flat::Bool(b),
                                            vec![],
                                            vec![]),
-        SExpr::Tuple(t) => panic!("NYI"),
+        SExpr::Tuple(elts) => {
+            let tup_temp = get_unique_varname("tmp");
+            let mut flat_elts = vec![];
+            let mut elts_assigns : Vec<Flat> = vec![];
+            let mut elts_vars = vec![];
+
+            for elt in elts {
+                let (flat_elt, elt_assigns, elt_vars) = 
+                    match flatten(elt) {
+                        FlatResult::Flat(flat, assigns, vars) => (flat, assigns, vars),
+                        _ => panic!("unreachable"),
+                    };
+                flat_elts.push(flat_elt);
+                elts_assigns.extend_from_slice(&elt_assigns);
+                elts_vars.extend_from_slice(&elt_vars);
+            }
+
+            elts_assigns.extend_from_slice(&[
+                Flat::Assign(tup_temp.to_string(),
+                             box Flat::Tuple(flat_elts))
+            ]);
+            elts_vars.extend_from_slice(&[tup_temp.clone()]);
+            
+            return FlatResult::Flat(Flat::Symbol(tup_temp),
+                                    elts_assigns,
+                                    elts_vars)
+        },
         SExpr::Let(bindings, body) => {
             let (flat_body, body_assigns, body_vars) = 
                 match flatten(*body) {
@@ -213,6 +240,34 @@ pub fn flatten(expr: SExpr) -> FlatResult {
                             return FlatResult::Flat(Flat::Symbol(plus_temp),
                                                     e1_assigns,
                                                     e1_vars);
+                        },
+                        "tuple-ref" => {
+                            let (tuple, index) = match &args[..] {
+                                &[ref tuple, ref index] => (tuple, index),
+                                _ => panic!("Wrong no. of args to `tuple-ref`: {:?}", args),
+                            };
+                            let index = match index {
+                                &SExpr::Number(n) => Flat::Number(n),
+                                &_ => panic!("index to tuple-ref must be a literal number"),
+                            };
+                            let (flat_tuple, mut tup_assigns, mut tup_vars) =
+                                match flatten(tuple.clone()) {
+                                    FlatResult::Flat(flat, assigns, vars) =>
+                                        (flat, assigns, vars),
+                                    _ => panic!("unreachable"),
+                                };
+
+                            let ref_temp = get_unique_varname("tmp");
+                            let flat_ref = Flat::Assign(ref_temp.clone(),
+                                                        Box::new(Flat::Prim("tuple-ref".to_string(), 
+                                                                            vec![flat_tuple, index])));
+                            tup_assigns.extend_from_slice(&[flat_ref]);
+
+                            tup_vars.extend_from_slice(&[ref_temp.clone()]);
+
+                            return FlatResult::Flat(Flat::Symbol(ref_temp),
+                                                    tup_assigns,
+                                                    tup_vars);
                         },
                         f => {
                             let app_temp = get_unique_varname("tmp");
