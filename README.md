@@ -13,6 +13,7 @@
 ```shell
 cargo run foo.txt > test.s
 nasm -f elf64 test.s
+gcc -c -g -std=c99 runtime.c
 gcc -g runtime.o test.o
 ./a.out
 ```
