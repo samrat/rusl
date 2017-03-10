@@ -1,0 +1,12 @@
+(define (fibo x)
+  (if (< x 2)
+      1
+      (+ (fibo (+ x (- 2)))
+         (fibo (+ x (- 1))))))
+
+
+(if (> 2 4)
+    (tuple 42
+           (tuple 1
+                  (let ((x (fibo 7))) x)))
+    (tuple-ref (tuple 1 20 3) 1))
