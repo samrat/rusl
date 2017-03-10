@@ -4,13 +4,13 @@ use parser::{SExpr, CC};
 #[derive(Clone, Debug, PartialEq)]
 pub enum Flat {
     Symbol(String),
-    Number(i32),
+    Number(i64),
     Bool(bool),
+    Tuple(Vec<Flat>),
     Assign(String, Box<Flat>),
     Return(Box<Flat>),
     If(Box<Flat>, Vec<Flat>, Vec<Flat>),
     Cmp(CC, Box<Flat>, Box<Flat>),
-    EqP(Box<Flat>, Box<Flat>),
     App(String, Vec<Flat>),
     Prim(String, Vec<Flat>),
 }
@@ -36,6 +36,33 @@ pub fn flatten(expr: SExpr) -> FlatResult {
         SExpr::Bool(b) => FlatResult::Flat(Flat::Bool(b),
                                            vec![],
                                            vec![]),
+        SExpr::Tuple(elts) => {
+            let tup_temp = get_unique_varname("tmp");
+            let mut flat_elts = vec![];
+            let mut elts_assigns : Vec<Flat> = vec![];
+            let mut elts_vars = vec![];
+
+            for elt in elts {
+                let (flat_elt, elt_assigns, elt_vars) = 
+                    match flatten(elt) {
+                        FlatResult::Flat(flat, assigns, vars) => (flat, assigns, vars),
+                        _ => panic!("unreachable"),
+                    };
+                flat_elts.push(flat_elt);
+                elts_assigns.extend_from_slice(&elt_assigns);
+                elts_vars.extend_from_slice(&elt_vars);
+            }
+
+            elts_assigns.extend_from_slice(&[
+                Flat::Assign(tup_temp.to_string(),
+                             box Flat::Tuple(flat_elts))
+            ]);
+            elts_vars.extend_from_slice(&[tup_temp.clone()]);
+            
+            return FlatResult::Flat(Flat::Symbol(tup_temp),
+                                    elts_assigns,
+                                    elts_vars)
+        },
         SExpr::Let(bindings, body) => {
             let (flat_body, body_assigns, body_vars) = 
                 match flatten(*body) {
@@ -74,7 +101,7 @@ pub fn flatten(expr: SExpr) -> FlatResult {
         SExpr::Define(name, args, body) => {
             let (flat_body, mut body_assigns, mut body_vars) = 
                 match flatten(*body) {
-                    FlatResult::Flat(flat_body, mut body_assigns, mut body_vars) =>
+                    FlatResult::Flat(flat_body, body_assigns, body_vars) =>
                         (flat_body, body_assigns, body_vars),
                     _ => panic!("unreachable"),
                 };
@@ -95,19 +122,19 @@ pub fn flatten(expr: SExpr) -> FlatResult {
         SExpr::If(cnd, thn, els) => {
             let (flat_cnd, mut cnd_assigns, mut cnd_vars) = 
                 match flatten(*cnd) {
-                    FlatResult::Flat(flat_cnd, cnd_assigns, mut cnd_vars) => 
+                    FlatResult::Flat(flat_cnd, cnd_assigns, cnd_vars) => 
                         (flat_cnd, cnd_assigns, cnd_vars),
                     _ => panic!("unreachable"),
                 };
             let (flat_thn, mut thn_assigns, mut thn_vars) = 
                 match flatten(*thn) {
-                    FlatResult::Flat(flat_thn, mut thn_assigns, mut thn_vars) => 
+                    FlatResult::Flat(flat_thn, thn_assigns, thn_vars) => 
                         (flat_thn, thn_assigns, thn_vars),
                     _ => panic!("unreachable"),
                 };
             let (flat_els, mut els_assigns, mut els_vars) = 
                 match flatten(*els) {
-                    FlatResult::Flat(flat_els, mut els_assigns, mut els_vars) =>
+                    FlatResult::Flat(flat_els, els_assigns, els_vars) =>
                         (flat_els, els_assigns, els_vars),
                     _ => panic!("unreachable"),
                 };
@@ -118,8 +145,7 @@ pub fn flatten(expr: SExpr) -> FlatResult {
                                                          Box::new(flat_thn))]);
             els_assigns.extend_from_slice(&[Flat::Assign(if_temp.clone(),
                                                          Box::new(flat_els))]);
-            let flat_if = Flat::If(Box::new(Flat::EqP(Box::new(flat_cnd),
-                                                      Box::new(Flat::Bool(true)))),
+            let flat_if = Flat::If(Box::new(flat_cnd),
                                    thn_assigns,
                                    els_assigns);
 
@@ -167,8 +193,8 @@ pub fn flatten(expr: SExpr) -> FlatResult {
                                 _ => panic!("Wrong no. of args to `-`: {:?}", args),
                             };
                             let (flat_e, mut e_assigns, mut e_vars) =
-                                match flatten(args[0].clone()) {
-                                    FlatResult::Flat(flat_e, mut e_assigns, mut e_vars) =>
+                                match flatten(arg1.clone()) {
+                                    FlatResult::Flat(flat_e, e_assigns, e_vars) =>
                                         (flat_e, e_assigns, e_vars),
                                     _ => panic!("unreachable"),
                                 };
@@ -188,13 +214,13 @@ pub fn flatten(expr: SExpr) -> FlatResult {
                             };
                             let (flat_e1, mut e1_assigns, mut e1_vars) = 
                                 match flatten(arg1.clone()) {
-                                    FlatResult::Flat(flat_e1, mut e1_assigns, mut e1_vars) =>
+                                    FlatResult::Flat(flat_e1, e1_assigns, e1_vars) =>
                                         (flat_e1, e1_assigns, e1_vars),
                                     _ => panic!("unreachable"),
                                 };
                             let (flat_e2, mut e2_assigns, mut e2_vars) = 
                                 match flatten(arg2.clone()) {
-                                    FlatResult::Flat(flat_e2, mut e2_assigns, mut e2_vars) =>
+                                    FlatResult::Flat(flat_e2, e2_assigns, e2_vars) =>
                                         (flat_e2, e2_assigns, e2_vars),
                                     _ => panic!("unreachable"),
                                 };
@@ -212,6 +238,34 @@ pub fn flatten(expr: SExpr) -> FlatResult {
                             return FlatResult::Flat(Flat::Symbol(plus_temp),
                                                     e1_assigns,
                                                     e1_vars);
+                        },
+                        "tuple-ref" => {
+                            let (tuple, index) = match &args[..] {
+                                &[ref tuple, ref index] => (tuple, index),
+                                _ => panic!("Wrong no. of args to `tuple-ref`: {:?}", args),
+                            };
+                            let index = match index {
+                                &SExpr::Number(n) => Flat::Number(n),
+                                &_ => panic!("index to tuple-ref must be a literal number"),
+                            };
+                            let (flat_tuple, mut tup_assigns, mut tup_vars) =
+                                match flatten(tuple.clone()) {
+                                    FlatResult::Flat(flat, assigns, vars) =>
+                                        (flat, assigns, vars),
+                                    _ => panic!("unreachable"),
+                                };
+
+                            let ref_temp = get_unique_varname("tmp");
+                            let flat_ref = Flat::Assign(ref_temp.clone(),
+                                                        Box::new(Flat::Prim("tuple-ref".to_string(), 
+                                                                            vec![flat_tuple, index])));
+                            tup_assigns.extend_from_slice(&[flat_ref]);
+
+                            tup_vars.extend_from_slice(&[ref_temp.clone()]);
+
+                            return FlatResult::Flat(Flat::Symbol(ref_temp),
+                                                    tup_assigns,
+                                                    tup_vars);
                         },
                         f => {
                             let app_temp = get_unique_varname("tmp");
@@ -249,7 +303,7 @@ pub fn flatten(expr: SExpr) -> FlatResult {
         SExpr::Prog(defs, e) => {
             let (flat_e, mut e_assigns, mut e_vars) = 
                 match flatten(*e) {
-                    FlatResult::Flat(flat_e, mut e_assigns, mut e_vars) =>
+                    FlatResult::Flat(flat_e, e_assigns, e_vars) =>
                         (flat_e, e_assigns, e_vars),
                     _ => panic!("unreachable"),
                 };

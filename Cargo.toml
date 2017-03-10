@@ -1,5 +1,5 @@
 [package]
-name = "schemers"
+name = "rusl"
 version = "0.1.0"
 authors = ["Samrat Man Singh <samratmansingh@gmail.com>"]
 

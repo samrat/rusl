@@ -19,7 +19,6 @@ mod anf;
 
 use util::get_unique_varname;
 
-use lexer::Token;
 use lexer::LexerState;
 
 use parser::{SExpr, CC};
@@ -41,8 +40,9 @@ enum Reg {
 #[derive(Debug, Clone)]
 enum X86Arg {
     Reg(Reg),
-    Imm(i32),
-    RegOffset(Reg, i32),
+    Imm(u64),
+    RegOffset(Reg, i64),
+    GlobalVal(String),
     Var(String),     // pseudo-x86
 }
 
@@ -53,6 +53,7 @@ enum X86Arg {
 enum X86 {
     Mov(X86Arg, X86Arg),
     Add(X86Arg, X86Arg),
+    Sub(X86Arg, X86Arg),
     Neg(X86Arg),
     Cmp(X86Arg, X86Arg),
     Push(Reg),
@@ -76,7 +77,7 @@ enum X86 {
                     Vec<X86>,             // instrs
     ),
     DefineWithStackSize(String, // name
-                        i32,    // stack size
+                        i64,    // stack size
                         Vec<X86>, // instrs
                         ),
     
@@ -93,7 +94,7 @@ enum X86 {
 
     ProgWithStackSize(Vec<X86>,     // defines
                       Vec<X86>,     // main-instructions
-                      i32,          // stack size
+                      i64,          // stack size
     ),
     Call(String),
     JmpIf(CC, String),
@@ -101,25 +102,32 @@ enum X86 {
     Label(String),
 }
 
-const callee_save_regs : [Reg;5] =
-    [Reg::RBX, Reg::R12, Reg::R13, Reg::R14, Reg::R15];
-const caller_save_regs : [Reg;8] =
+const CONST_TRUE : u64  = 0xffffffffffffffff;
+const CONST_FALSE : u64 = 0x7fffffffffffffff;
+
+// R15 is used to point to rootstack
+// R11 is used to point to heap
+const CALLEE_SAVE_REGS : [Reg;4] =
+    [Reg::RBX, Reg::R12, Reg::R13, Reg::R14, // Reg::R15
+    ];
+const CALLER_SAVE_REGS : [Reg;7] =
     [Reg::RDX, Reg::RCX, Reg::RSI, Reg::RDI, 
-     Reg::R8, Reg::R9, Reg::R10, Reg::R11];
+     Reg::R8, Reg::R9, Reg::R10, // Reg::R11
+    ];
 // order of registers in which to place first 6 arguments
-const arg_reg_order : [Reg; 6] = [Reg::RDI,
+const ARG_REG_ORDER : [Reg; 6] = [Reg::RDI,
                                   Reg::RSI,
                                   Reg::RDX,
                                   Reg::RCX,
                                   Reg::R8,
                                   Reg::R9];
-const regs : [Reg;13] = [
+const REGS : [Reg;11] = [
     // callee-save
-    Reg::RBX, Reg::R12, Reg::R13, Reg::R14, Reg::R15,
+    Reg::RBX, Reg::R12, Reg::R13, Reg::R14, // Reg::R15,
 
     // caller-save
     Reg::RDX, Reg::RCX, Reg::RSI, Reg::RDI, 
-    Reg::R8, Reg::R9, Reg::R10, Reg::R11
+    Reg::R8, Reg::R9, Reg::R10, // Reg::R11
 ];
 
 // uniquify variable names. This function simply adds a monotonically
@@ -131,6 +139,12 @@ fn uniquify(mapping: &mut HashMap<String, String>, expr: SExpr)
             SExpr::Symbol(mapping.get(&name).unwrap().to_string()),
         SExpr::Number(_) => expr,
         SExpr::Bool(_) => expr,
+        SExpr::Tuple(elts) => {
+            let elts = elts.iter()
+                .map(|e| uniquify(mapping, e.clone()))
+                .collect();
+            SExpr::Tuple(elts)
+        },
         SExpr::Let(bindings, body) => {
             let mut new_bindings = vec![];
             for (k,v) in bindings {
@@ -188,11 +202,11 @@ fn uniquify(mapping: &mut HashMap<String, String>, expr: SExpr)
 fn flat_arg_type(v: &Flat) -> X86Arg {
     match v {
         &Flat::Symbol(ref name) => X86Arg::Var(name.clone()),
-        &Flat::Number(n) => X86Arg::Imm(n),
+        &Flat::Number(n) => X86Arg::Imm((n << 1) as u64),
         &Flat::Bool(b) => {
             match b {
-                true => X86Arg::Imm(1),
-                false => X86Arg::Imm(0),
+                true => X86Arg::Imm(CONST_TRUE),
+                false => X86Arg::Imm(CONST_FALSE),
             }
         },
         &_ => {
@@ -207,15 +221,17 @@ fn flat_to_px86(instr: Flat) -> Vec<X86> {
     match instr {
         Flat::Assign(dest, e) => {
             match *e {
-                Flat::Symbol(name) => vec![X86::Mov(X86Arg::Var(dest), X86Arg::Var(name))],
-                Flat::Number(n) => vec![X86::Mov(X86Arg::Var(dest), X86Arg::Imm(n))],
+                Flat::Symbol(name) => vec![X86::Mov(X86Arg::Var(dest), 
+                                                    X86Arg::Var(name))],
+                Flat::Number(n) => vec![X86::Mov(X86Arg::Var(dest),
+                                                 X86Arg::Imm((n << 1) as u64))],
                 Flat::Bool(b) => {
                     let bval = match b {
-                        true => 1,
-                        false => 0,
+                        true => CONST_TRUE,
+                        false => CONST_FALSE,
                     };
                     return vec![X86::Mov(X86Arg::Var(dest), 
-                                         X86Arg::Imm(bval))];
+                                         X86Arg::Imm(bval as u64))];
                 },
                 // https://github.com/rust-lang/rust/issues/16223
                 x => match x {
@@ -249,7 +265,30 @@ fn flat_to_px86(instr: Flat) -> Vec<X86> {
                                              flat_arg_type(arg)),
                                     X86::Neg(X86Arg::Var(dest.clone()))
                                 ];
-                            }
+                            },
+                            "tuple-ref" => {
+                                let (tuple, index) = match &args[..] {
+                                    &[ref tuple, ref index] => (tuple, index),
+                                    _ => {
+                                        error!("`tuple-ref` expects 2 arguments");
+                                        process::exit(0);
+                                    },
+                                };
+
+                                let index = match index {
+                                    &Flat::Number(n) => n,
+                                    &_ => panic!("index to tuple-ref must be a literal number"),
+                                };
+
+                                return vec![
+                                    X86::Mov(X86Arg::Reg(Reg::R11), flat_arg_type(tuple)),
+                                    // subtract 1 from tuple tag
+                                    X86::Sub(X86Arg::Reg(Reg::R11), X86Arg::Imm(1)),
+                                    // NOTE: first word contains count
+                                    X86::Mov(X86Arg::Var(dest), X86Arg::RegOffset(Reg::R11,
+                                                                                  8*(index+1)))
+                                ];
+                            },
                             _ => panic!("primitive not defined"),
                         }
                     },
@@ -257,7 +296,7 @@ fn flat_to_px86(instr: Flat) -> Vec<X86> {
                         let mut instrs = vec![];
 
                         // push caller-save-regs
-                        for r in caller_save_regs.iter() {
+                        for r in CALLER_SAVE_REGS.iter() {
                             instrs.push(X86::Push(r.clone()));
                         }
 
@@ -265,7 +304,7 @@ fn flat_to_px86(instr: Flat) -> Vec<X86> {
                         // push args
                         for (i, arg) in args.iter().map(|a| flat_arg_type(a)).enumerate() {
                             instrs.push(
-                                X86::Mov(X86Arg::Reg(arg_reg_order[i].clone()),
+                                X86::Mov(X86Arg::Reg(ARG_REG_ORDER[i].clone()),
                                          arg)
                             );
                         }
@@ -275,7 +314,7 @@ fn flat_to_px86(instr: Flat) -> Vec<X86> {
                         ]);
 
                         // pop caller-save regs
-                        for r in caller_save_regs.iter().rev() {
+                        for r in CALLER_SAVE_REGS.iter().rev() {
                             instrs.push(X86::Pop(r.clone()));
                         }
 
@@ -290,6 +329,38 @@ fn flat_to_px86(instr: Flat) -> Vec<X86> {
                                       flat_arg_type(&*right)),
                              X86::Set(X86Arg::Reg(Reg::AL), cc),
                              X86::MovZx(X86Arg::Var(dest), X86Arg::Reg(Reg::AL))]
+                    },
+                    Flat::Tuple(elts) => {
+                        // with count in first word
+                        let len = elts.len() + 1;
+                        let total_len = 8*(len + (len % 2));
+                        let mut instrs =
+                            vec![X86::Mov(X86Arg::Var(dest.clone()),
+                                          X86Arg::GlobalVal("free_ptr".to_string())),
+                                 X86::Add(X86Arg::GlobalVal("free_ptr".to_string()),
+                                          X86Arg::Imm(total_len as u64)),
+                                 X86::Mov(X86Arg::Reg(Reg::R11),
+                                          X86Arg::Var(dest.clone()))];
+                        // store count in first word
+                        instrs.extend_from_slice(&[
+                            X86::Mov(X86Arg::RegOffset(Reg::R11, 0),
+                                     X86Arg::Imm(elts.len() as u64))
+                        ]);
+                        
+                        for (i, elt) in elts.iter().enumerate() {
+                            instrs.push(
+                                X86::Mov(X86Arg::RegOffset(Reg::R11,
+                                                           8*(i+1) as i64),
+                                         flat_arg_type(elt))
+                            );
+                        }
+
+                        // add 1 to indicate it is a tuple
+                        instrs.extend_from_slice(&[
+                            X86::Add(X86Arg::Var(dest), X86Arg::Imm(1))
+                        ]);
+
+                        return instrs;
                     },
                     _ => {
                         println!("{:?}", x);
@@ -307,7 +378,8 @@ fn flat_to_px86(instr: Flat) -> Vec<X86> {
             let (eq_left, eq_right) = match *cnd {
                 x => match x {
                     // https://github.com/rust-lang/rust/issues/16223
-                    Flat::EqP(left, right) => (left, right),
+                    Flat::Number(_) => (flat_arg_type(&x), X86Arg::Imm(1)),
+                    Flat::Symbol(_) => (flat_arg_type(&x), X86Arg::Imm(1)),
                     _ => panic!("if cond needs to be Flat::EqP"),
                 },
             };
@@ -321,8 +393,7 @@ fn flat_to_px86(instr: Flat) -> Vec<X86> {
                 let mut i_instrs = flat_to_px86(i);
                 els_instrs.append(&mut i_instrs);
             }
-            return vec![X86::If(Box::new(X86::EqP(flat_arg_type(&*eq_left),
-                                                  flat_arg_type(&*eq_right))),
+            return vec![X86::If(Box::new(X86::EqP(eq_left, eq_right)),
                                 thn_instrs,
                                 els_instrs)];
         },
@@ -343,7 +414,7 @@ fn select_instructions(flat_prog: FlatResult) -> X86 {
             for (i, arg) in args.iter().enumerate() {
                 move_args.push(
                     X86::Mov(X86Arg::Var(arg.clone()), 
-                             X86Arg::Reg(arg_reg_order[i].clone()))
+                             X86Arg::Reg(ARG_REG_ORDER[i].clone()))
                 );
             }
             
@@ -395,6 +466,11 @@ fn instruction_rw(instr: X86) -> (Vec<String>, Vec<String>, Vec<String>) {
                     vec![src],
                     vec![]);
         },
+        X86::Mov(X86Arg::RegOffset(_, _), X86Arg::Var(src)) => {
+            return (vec![src.clone()],
+                    vec![src],
+                    vec![]);
+        },
         X86::Mov(_, _) => {
             return (vec![], vec![], vec![]);
         },
@@ -420,16 +496,20 @@ fn instruction_rw(instr: X86) -> (Vec<String>, Vec<String>, Vec<String>) {
                 (_, _) => (vec![], vec![], vec![]),
             }
         },
+        X86::Sub(X86Arg::Var(dest), X86Arg::Var(src)) |
         X86::Add(X86Arg::Var(dest), X86Arg::Var(src)) => {
             return (vec![dest.clone(), src.clone()],
                     vec![dest.clone(), src],
                     vec![dest]);
         },
+        X86::Sub(X86Arg::Var(dest), _) |
         X86::Add(X86Arg::Var(dest), _) => {
             return (vec![dest.clone()],
                     vec![dest.clone()],
                     vec![dest]);
         },
+        X86::Sub(X86Arg::Reg(_), X86Arg::Imm(_)) |
+        X86::Add(X86Arg::GlobalVal(_), X86Arg::Imm(_)) |
         X86::Push(_) | X86::Pop(_) | X86::Call(_) =>
             return (vec![], vec![], vec![]),
         X86::Neg(X86Arg::Var(n)) => {
@@ -437,8 +517,6 @@ fn instruction_rw(instr: X86) -> (Vec<String>, Vec<String>, Vec<String>) {
                     vec![n.clone()],
                     vec![n.clone()]);
         },
-
-
         _ => panic!("NYI: {:?}", instr),
     }
 }
@@ -475,8 +553,11 @@ fn get_live_after_sets(mut instrs: Vec<X86>, lives: HashSet<String>)
                     }
                 };
 
+                let cond_vars : HashSet<_> = cond_vars.iter().cloned().collect();
+
                 let mut live = lives.clone();
                 live = live.union(&lives).cloned().collect();
+                live = live.union(&cond_vars).cloned().collect();
                 live = live.union(&thn_lives).cloned().collect();
                 live = live.union(&els_lives).cloned().collect();
 
@@ -490,7 +571,7 @@ fn get_live_after_sets(mut instrs: Vec<X86>, lives: HashSet<String>)
             },
 
             _ => {
-                let (all_vars, read_vars, written_vars) =
+                let (_, read_vars, written_vars) =
                     instruction_rw(instr.clone());
                 let mut live = live_of_next.clone();
                 let written_vars_set : HashSet<_> = 
@@ -540,7 +621,7 @@ fn compute_live_intervals(instrs: Vec<X86>, live_sets: Vec<HashSet<String>>,
     let instr_live_sets : Vec<_> = instrs.iter().zip(live_sets).collect();
     for (instr, live_set) in instr_live_sets {
         match (instr.clone(), live_set.clone()) {
-            (X86::IfWithLives(cnd, thns, thn_lives,
+            (X86::IfWithLives(_, thns, thn_lives,
                               elss, els_lives), _) => {
                 compute_live_intervals(thns.clone(), thn_lives, live_intervals, line_num);
                 compute_live_intervals(elss.clone(), els_lives, live_intervals, line_num);
@@ -549,7 +630,7 @@ fn compute_live_intervals(instrs: Vec<X86>, live_sets: Vec<HashSet<String>>,
             (_, _) => {
                 for v in live_set {
                     match live_intervals.get(&v) {
-                        Some(&(start, end)) => {
+                        Some(&(start, _)) => {
                             live_intervals.insert(v, (start, line_num));
                         },
                         None => {
@@ -574,12 +655,11 @@ fn allocate_registers(live_intervals: HashMap<String, (i32, i32)>)
     live_intervals_vec.sort_by_key(|interval| (interval.clone().1).0);
 
     let mut mapping : HashMap<String, i32> = HashMap::new();
-    let mut free : Vec<i32> = (0..regs.len()).map(|i| i as i32).collect();
-    let mut alloc : HashSet<i32> = HashSet::new();
+    let mut free : Vec<i32> = (0..REGS.len()).map(|i| i as i32).collect();
     let mut active_intervals : HashSet<(String, (i32, i32))> = HashSet::new();
     for (v, (start, end)) in live_intervals_vec.clone() {
-        // clear done intervals from alloc, and free registers
-        // allocated to them
+        // clear done intervals from active_intervals, and free
+        // registers allocated to them
         for (a, (astart, aend)) in active_intervals.clone() {
             if aend < start {
                 active_intervals.remove(&(a.clone(), (astart, aend)));
@@ -615,9 +695,13 @@ fn assign_homes_to_op2(locs: &HashMap<String, X86Arg>,
         },
         (_, X86Arg::Var(s)) =>
             (dest, locs.get(&s).unwrap().clone()),
-        (X86Arg::Reg(reg), _) =>
-            (dest, src) ,
-        _ => panic!("unreachable"),
+        
+        (X86Arg::RegOffset(_, _), X86Arg::Imm(_)) |
+        (X86Arg::GlobalVal(_), X86Arg::Imm(_)) |
+        (X86Arg::Imm(_), X86Arg::Imm(_)) |
+        (X86Arg::Reg(_), _) =>
+            (dest, src),
+        _ => panic!("unreachable: {:?}", (dest, src)),
     }
 }
 
@@ -628,7 +712,7 @@ fn assign_homes_to_instrs(instrs: Vec<X86>, locs: HashMap<String, X86Arg>) -> Ve
     let mut new_instrs = vec![];
     for i in instrs {
         match i {
-            X86::IfWithLives(cnd, thn, thn_lives, els, els_lives) => {
+            X86::IfWithLives(cnd, thn, _, els, _) => {
                 let new_cnd = match *cnd {
                     x => match x {
                         // https://github.com/rust-lang/rust/issues/16223
@@ -675,6 +759,7 @@ fn assign_homes_to_instrs(instrs: Vec<X86>, locs: HashMap<String, X86Arg>) -> Ve
             }
             X86::Set(X86Arg::Reg(_), _) |
             X86::Push(_) | X86::Pop(_) |
+            X86::Sub(X86Arg::Reg(_), X86Arg::Imm(_)) |
             X86::Call(_) => {
                 new_instrs.push(i);
             },
@@ -687,7 +772,7 @@ fn assign_homes_to_instrs(instrs: Vec<X86>, locs: HashMap<String, X86Arg>) -> Ve
 
 fn decide_locs(vars: &Vec<String>, instrs: &Vec<X86>, 
                live_sets: Vec<HashSet<String>>) 
-               -> (HashMap<String, X86Arg>, i32) {
+               -> (HashMap<String, X86Arg>, i64) {
     let mut live_intervals = HashMap::new();
     compute_live_intervals(instrs.clone(),
                            live_sets, 
@@ -699,7 +784,7 @@ fn decide_locs(vars: &Vec<String>, instrs: &Vec<X86>,
         locs.insert(
             var.clone(),
             match reg_alloc.get(&var) {
-                Some(reg) => X86Arg::Reg(regs[reg.clone() as usize].clone()),
+                Some(reg) => X86Arg::Reg(REGS[reg.clone() as usize].clone()),
                 None => {
                     stack_size += 1;
                     X86Arg::RegOffset(Reg::RBP, stack_size * -8)
@@ -755,7 +840,7 @@ fn lower_if (instr: X86) -> Vec<X86> {
             }
 
             let mut if_instrs = vec![
-                X86::Cmp(eqp_right, eqp_left),
+                X86::Cmp(eqp_left, eqp_right),
                 X86::JmpIf(CC::E, thn_label.clone()),
             ];
             if_instrs.append(&mut new_elss);
@@ -794,35 +879,35 @@ fn lower_conditionals(prog: X86) -> X86 {
 fn patch_single_instr(instr: X86) -> Vec<X86> {
     match instr {
         // both source and dest are indirect addresses
-        X86::Mov(X86Arg::RegOffset(Reg::RBP, dest), 
-                 X86Arg::RegOffset(Reg::RBP, src)) => {
+        X86::Mov(X86Arg::RegOffset(dest_reg, dest), 
+                 X86Arg::RegOffset(src_reg, src)) => {
             vec![X86::Mov(X86Arg::Reg(Reg::RAX),
-                          X86Arg::RegOffset(Reg::RBP, src)),
-                 X86::Mov(X86Arg::RegOffset(Reg::RBP, dest), 
+                          X86Arg::RegOffset(src_reg, src)),
+                 X86::Mov(X86Arg::RegOffset(dest_reg, dest), 
                           X86Arg::Reg(Reg::RAX))]
         },
-        X86::MovZx(X86Arg::RegOffset(Reg::RBP, offset),
+        X86::MovZx(X86Arg::RegOffset(dest_reg, offset),
                    src) => {
             vec![X86::MovZx(X86Arg::Reg(Reg::RAX), src),
-                 X86::Mov(X86Arg::RegOffset(Reg::RBP, offset),
+                 X86::Mov(X86Arg::RegOffset(dest_reg, offset),
                           X86Arg::Reg(Reg::RAX))]
         },
         // both source and dest are indirect addresses
-        X86::Add(X86Arg::RegOffset(Reg::RBP, dest), 
-                 X86Arg::RegOffset(Reg::RBP, src)) => {
+        X86::Add(X86Arg::RegOffset(dest_reg, dest), 
+                 X86Arg::RegOffset(src_reg, src)) => {
             vec![X86::Mov(X86Arg::Reg(Reg::RAX),
-                          X86Arg::RegOffset(Reg::RBP, dest)),
+                          X86Arg::RegOffset(dest_reg.clone(), dest)),
                  X86::Add(X86Arg::Reg(Reg::RAX),
-                          X86Arg::RegOffset(Reg::RBP, src)),
-                 X86::Mov(X86Arg::RegOffset(Reg::RBP, dest),
+                          X86Arg::RegOffset(src_reg, src)),
+                 X86::Mov(X86Arg::RegOffset(dest_reg, dest),
                           X86Arg::Reg(Reg::RAX))
             ]
         },
-        X86::Neg(X86Arg::RegOffset(Reg::RBP, offset)) => {
+        X86::Neg(X86Arg::RegOffset(reg, offset)) => {
             vec![X86::Mov(X86Arg::Reg(Reg::RAX),
-                          X86Arg::RegOffset(Reg::RBP, offset)),
+                          X86Arg::RegOffset(reg.clone(), offset)),
                  X86::Neg(X86Arg::Reg(Reg::RAX)),
-                 X86::Mov(X86Arg::RegOffset(Reg::RBP, offset),
+                 X86::Mov(X86Arg::RegOffset(reg, offset),
                           X86Arg::Reg(Reg::RAX))]
         },
         X86::Cmp(X86Arg::Imm(i), right) => {
@@ -835,7 +920,7 @@ fn patch_single_instr(instr: X86) -> Vec<X86> {
 
 fn patch_instructions(prog: X86) -> X86 {
     match prog {
-        X86::DefineWithStackSize(name, stack_size, mut instrs) => {
+        X86::DefineWithStackSize(name, stack_size, instrs) => {
             let patched_instrs = 
                 instrs.iter().flat_map(|i| patch_single_instr(i.clone())).collect();
 
@@ -881,13 +966,24 @@ fn print_x86_arg(arg: X86Arg) -> String {
     match arg {
         X86Arg::Reg(r) => format!("{}", display_reg(&r)),
         X86Arg::Imm(n) => format!("{}", n),
-        X86Arg::RegOffset(r, offset) => format!("QWORD [{}{}]", 
-                                                display_reg(&r), offset),
+        X86Arg::RegOffset(r, offset) => {
+            if offset < 0 {
+                format!("QWORD [{}{}]", 
+                        display_reg(&r), 
+                        offset)
+            }
+            else {
+                format!("QWORD [{}+{}]", 
+                        display_reg(&r), 
+                        offset)
+            }
+        },
+        X86Arg::GlobalVal(g) => format!("QWORD [rel {}]", g),
         _ => panic!("invalid arg type"),
     }
 }
 
-fn print_CC(cc: CC) -> String {
+fn print_cc(cc: CC) -> String {
     match cc {
         CC::E => "e", 
         CC::L => "l", 
@@ -905,17 +1001,20 @@ fn print_instr(instr: X86) -> String {
         X86::Add(dest, src) => format!("add {}, {}", 
                                        print_x86_arg(dest), 
                                        print_x86_arg(src)),
+        X86::Sub(dest, src) => format!("sub {}, {}", 
+                                       print_x86_arg(dest), 
+                                       print_x86_arg(src)),
         X86::Cmp(left, right) => format!("cmp {}, {}",
                                         print_x86_arg(left), 
                                         print_x86_arg(right)),
         X86::JmpIf(cc, label) => format!("j{} {}",
-                                         print_CC(cc),
+                                         print_cc(cc),
                                          label),
         X86::Jmp(label) => format!("jmp {}", label),
         X86::Label(label) => format!("{}:", label),
         X86::Call(label) => format!("call {}", label),
         X86::Set(X86Arg::Reg(r), cc) =>
-            format!("set{} {}", print_CC(cc), display_reg(&r)),
+            format!("set{} {}", print_cc(cc), display_reg(&r)),
         X86::MovZx(dest, src) => format!("movzx {}, {}",
                                          print_x86_arg(dest),
                                          print_x86_arg(src)),
@@ -933,17 +1032,17 @@ fn print_instr(instr: X86) -> String {
 
 fn print_x86(prog: X86) -> String {
     let mut save_callee_save_regs = String::new();
-    for r in callee_save_regs.iter() {
+    for r in CALLEE_SAVE_REGS.iter() {
         save_callee_save_regs.push_str(&format!("    push {}\n",
                                                 display_reg(r)));
     }
     let mut restore_callee_save_regs = String::new();
-    for r in callee_save_regs.iter().rev() {
+    for r in CALLEE_SAVE_REGS.iter().rev() {
         restore_callee_save_regs.push_str(&format!("    pop {}\n",
                                                    display_reg(r)));
     }
 
-    let mut instrs_str = match prog {
+    let instrs_str = match prog {
         X86::DefineWithStackSize(name, stack_size, instrs) => {
             let stack_size = 8 * stack_size;
             let prelude = format!("{}:
@@ -975,15 +1074,21 @@ fn print_x86(prog: X86) -> String {
                 defs_str.push_str(&print_x86(def)[..]);
             }
             let prelude = format!("section .text
-extern print_int
+extern print
+extern initialize
+extern heap
+extern rootstack
+extern free_ptr
 global main
 main:
     push rbp
     mov rbp, rsp
 {}
-    sub rsp, {}\n", save_callee_save_regs, stack_size);
+    sub rsp, {}
+    call initialize
+    mov r15, [rel heap]\n", save_callee_save_regs, stack_size);
             let postlude = format!("    mov rdi, rax
-    call print_int
+    call print
     add rsp, {}
 {}
     mov rsp, rbp
@@ -1034,11 +1139,12 @@ fn read_input() -> io::Result<()> {
     let uniquified = uniquify(&mut uniquify_mapping,
                               SExpr::Prog(toplevel[..toplevel.len()-1].to_vec(),
                                           Box::new(toplevel[toplevel.len()-1].clone())));
-    
     let flattened = flatten(uniquified);
-
+    // println!("{:?}", flattened);
+        
     let instrs = select_instructions(flattened);
     let instrs = uncover_live(instrs);
+    
     let homes_assigned = assign_homes(instrs);
 
     let ifs_lowered = lower_conditionals(homes_assigned);
@@ -1051,5 +1157,5 @@ fn read_input() -> io::Result<()> {
 }
 
 fn main() {
-    read_input();
+    let _ = read_input();
 }
