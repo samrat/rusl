@@ -1,5 +1,7 @@
 # rusl
 
+A minimal Lisp that compiles to x86-64.
+
 ```scheme
 (define (fibo x)
   (if (< x 2)
