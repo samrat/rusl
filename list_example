@@ -1,0 +1,16 @@
+(define (cons a b)
+  (tuple a b))
+
+(define (car t)
+  (tuple-ref t 0))
+
+(define (cdr t)
+  (tuple-ref t 1))
+
+(define (sum l)
+  (if (= l #f)
+      0
+      (+ (car l) (sum (cdr l)))))
+
+(let ((mylist (cons 1 (cons 2 (cons 3 #f)))))
+  (sum mylist))

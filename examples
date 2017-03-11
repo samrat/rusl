@@ -4,11 +4,8 @@
       (+ (fibo (+ x (- 2)))
          (fibo (+ x (- 1))))))
 
-(define (first t)
-  (tuple-ref t 0))
-        
 (if (> 2 4)
     (tuple 42
            (tuple 1
                   (let ((x (fibo 7))) x)))
-    (first (tuple 1 20 3)))
+    (tuple-ref (tuple 42 24) 0))
