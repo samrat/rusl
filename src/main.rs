@@ -913,10 +913,15 @@ fn patch_single_instr(instr: X86) -> Vec<X86> {
                  X86::Mov(X86Arg::RegOffset(reg, offset),
                           X86Arg::Reg(Reg::RAX))]
         },
+        // cmp can't take imm64
         X86::Cmp(X86Arg::Imm(i), right) => {
             vec![X86::Mov(X86Arg::Reg(Reg::RAX), X86Arg::Imm(i)),
                  X86::Cmp(X86Arg::Reg(Reg::RAX), right)]
-        }
+        },
+        X86::Cmp(left, X86Arg::Imm(i)) => {
+            vec![X86::Mov(X86Arg::Reg(Reg::RAX), X86Arg::Imm(i)),
+                 X86::Cmp(left, X86Arg::Reg(Reg::RAX))]
+        },
         _ => vec![instr],
     }
 }
