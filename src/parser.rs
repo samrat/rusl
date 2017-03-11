@@ -93,11 +93,11 @@ pub fn get_ast(expr: &SExpr) -> SExpr {
         },
         &SExpr::List(ref elts) =>
             match &elts[..] {
-                &[SExpr::Symbol(ref k), SExpr::List(ref defelts), ref body] 
+                &[SExpr::Symbol(ref k), SExpr::List(ref defelts), ref body]
                     if k == "define" => {
                     let ref name = defelts[0];
                     let args = defelts[1..].to_vec();
-                    
+
                     match name {
                         &SExpr::Symbol(ref name) => {
                             return SExpr::Define(name.clone(), get_arg_names(&args.to_vec()),
@@ -106,7 +106,7 @@ pub fn get_ast(expr: &SExpr) -> SExpr {
                         _ => panic!("invalid function prototype"),
                     }
                 },
-                &[SExpr::Symbol(ref k), ref cnd, ref thn, ref els] 
+                &[SExpr::Symbol(ref k), ref cnd, ref thn, ref els]
                     if k == "if" => {
                     return SExpr::If(Box::new(get_ast(cnd)),
                                      Box::new(get_ast(thn)),
@@ -128,16 +128,16 @@ pub fn get_ast(expr: &SExpr) -> SExpr {
                             };
                             astified_bindings.push((keyname, get_ast(&val)));
                         }
-                        return SExpr::Let(astified_bindings, Box::new(get_ast(&body)));  
+                        return SExpr::Let(astified_bindings, Box::new(get_ast(&body)));
                     },
-                &[SExpr::Symbol(ref k), _..] 
+                &[SExpr::Symbol(ref k), _..]
                     if k == "tuple" => {
                         let mut tuple_elts = elts[1..].to_vec();
                         tuple_elts = tuple_elts.iter().map(|e| get_ast(e)).collect();
                         return SExpr::Tuple(tuple_elts);
                     },
                 &[SExpr::Symbol(ref cmp), ref left, ref right]
-                    if (cmp == ">" || cmp == "<" || 
+                    if (cmp == ">" || cmp == "<" ||
                         cmp == "<=" || cmp == ">=" ||
                         cmp == "=") => {
                         let cc = match &cmp[..] {
@@ -174,7 +174,7 @@ pub fn read(ls: &mut LexerState) -> SExpr {
 
 #[test]
 fn test_parser() {
-    let mut input = String::from("(if #f (+ 42 (foo 12)) 17) 
+    let mut input = String::from("(if #f (+ 42 (foo 12)) 17)
                                   (define (foo x y z) (+ x 10))
                                   (+ 1 2)");
     let mut lexer = LexerState {
@@ -193,14 +193,14 @@ fn test_parser() {
                read(&mut lexer));
 
     // Second top-level s-expression
-    assert_eq!(SExpr::Define("foo".to_string(), vec!["x".to_string(), "y".to_string(), "z".to_string()], 
-                             Box::new(SExpr::App(Box::new(SExpr::Symbol("+".to_string())), 
+    assert_eq!(SExpr::Define("foo".to_string(), vec!["x".to_string(), "y".to_string(), "z".to_string()],
+                             Box::new(SExpr::App(Box::new(SExpr::Symbol("+".to_string())),
                                         vec![SExpr::Symbol("x".to_string()), SExpr::Number(10)]))),
                read(&mut lexer));
 
     // Third top-level s-expression
     assert_eq!(SExpr::App(Box::new(SExpr::Symbol("+".to_string())),
-                          vec![SExpr::Number(1), 
+                          vec![SExpr::Number(1),
                                SExpr::Number(2)]),
                read(&mut lexer));
     // nothing left in string
