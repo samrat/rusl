@@ -79,6 +79,19 @@ pub fn get_token(ls: &mut LexerState) -> Token {
                         ls.line_num += 1;
                         continue;
                     },
+                    ';' => {
+                        iter.next();
+                        ls.pos += 1;
+                        ls.col += 1;
+                        while let Some(c) = iter.next() {
+                            ls.pos += 1;
+                            if c.clone() == '\n' {
+                                break;
+                            }
+                        }
+                        ls.line_num += 1;
+                        ls.col = 0;
+                    },
                     ' ' => {
                         iter.next();
                         ls.pos += 1;

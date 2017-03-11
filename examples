@@ -1,4 +1,5 @@
 (define (fibo x)
+  ;; Get x-th Fibonacci number
   (if (< x 2)
       1
       (+ (fibo (+ x (- 2)))
