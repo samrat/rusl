@@ -166,15 +166,17 @@ fn uniquify(mapping: &mut HashMap<String, String>, expr: SExpr)
                               box uniquify(mapping, *left),
                               box uniquify(mapping, *right)),
         SExpr::Define(name, args, val) => {
-            // TODO: uniquify function name
+            let uniq_fname = get_unique_varname(&name);
+            mapping.insert(name, uniq_fname.clone());
+
             let mut new_args = vec![];
             for arg in args {
                 let new_arg = get_unique_varname(&arg);
                 new_args.push(new_arg.clone());
                 mapping.insert(arg, new_arg);
             }
-            
-            return SExpr::Define(name,
+
+            return SExpr::Define(uniq_fname,
                                  new_args,
                                  Box::new(uniquify(mapping, *val)));
         },
@@ -185,7 +187,8 @@ fn uniquify(mapping: &mut HashMap<String, String>, expr: SExpr)
         },
         SExpr::App(f, mut args) => {
             args = args.iter().map(|a| uniquify(mapping, a.clone())).collect();
-            return SExpr::App(f, args);
+            return SExpr::App(box uniquify(mapping, *f),
+                              args);
         },
         SExpr::Prog(mut defs, e) => {
             defs = defs.iter().map(|def| uniquify(mapping, def.clone())).collect();
@@ -1127,7 +1130,10 @@ fn read_input() -> io::Result<()> {
         tok_buf: None,
     };
 
-    let mut uniquify_mapping = HashMap::new();
+    let mut uniquify_mapping : HashMap<String, String> = HashMap::new();
+    for prim in ["+", "-", "tuple-ref", "tuple"].iter() {
+        uniquify_mapping.insert(prim.to_string(), prim.to_string());
+    }
 
     let mut toplevel = vec![];
     let mut sexpr = read(&mut lexer);
