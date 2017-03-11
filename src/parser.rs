@@ -149,7 +149,9 @@ pub fn get_ast(expr: &SExpr) -> SExpr {
                             &_ => panic!("NYI"),
                         };
 
-                        return SExpr::Cmp(cc, box left.clone(), box right.clone());
+                        return SExpr::Cmp(cc,
+                                          box get_ast(left),
+                                          box get_ast(right));
                     },
                 &[ref f, _..] => {
                     let mut astified_args = vec![];
