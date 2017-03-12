@@ -122,13 +122,14 @@ const ARG_REG_ORDER : [Reg; 6] = [Reg::RDI,
                                   Reg::RCX,
                                   Reg::R8,
                                   Reg::R9];
-const REGS : [Reg;11] = [
+const REGS : [Reg;5] = [
     // callee-save
     Reg::RBX, Reg::R12, Reg::R13, Reg::R14, // Reg::R15,
 
     // caller-save
-    Reg::RDX, Reg::RCX, Reg::RSI, Reg::RDI,
-    Reg::R8, Reg::R9, Reg::R10, // Reg::R11
+    Reg::R10,
+    // Reg::RDX, Reg::RCX, Reg::RSI, Reg::RDI,
+    // Reg::R8, Reg::R9, Reg::R11
 ];
 
 // uniquify variable names. This function simply adds a monotonically
@@ -142,8 +143,6 @@ fn uniquify(mapping: &mut HashMap<String, String>, expr: SExpr)
         SExpr::FuncName(_) => panic!("FuncName should not be used before closure-conversion"),
         SExpr::Number(_) => expr,
         SExpr::Bool(_) => expr,
-        // TODO
-        SExpr::Lambda(_, _) => expr,
         SExpr::Tuple(elts) => {
             let elts = elts.iter()
                 .map(|e| uniquify(mapping, e.clone()))
@@ -170,6 +169,17 @@ fn uniquify(mapping: &mut HashMap<String, String>, expr: SExpr)
             return SExpr::Cmp(cc,
                               box uniquify(mapping, *left),
                               box uniquify(mapping, *right)),
+        SExpr::Lambda(args, body) => {
+            let mut new_args = vec![];
+            for arg in args {
+                let new_arg = get_unique_varname(&arg);
+                new_args.push(new_arg.clone());
+                mapping.insert(arg, new_arg);
+            }
+
+            return SExpr::Lambda(new_args,
+                                 Box::new(uniquify(mapping, *body)));
+        },
         SExpr::Define(name, args, val) => {
             let uniq_fname = get_unique_varname(&name);
             mapping.insert(name, uniq_fname.clone());
@@ -237,8 +247,10 @@ fn get_free_variables(env: &HashSet<String>,
         SExpr::Define(_, args, body) |
         SExpr::Lambda(args, body) => {
             let mut new_parent_env = HashSet::new();
-            new_parent_env = new_parent_env.union(&env).cloned().collect();
-            new_parent_env = new_parent_env.union(&parent_env).cloned().collect();
+            new_parent_env = new_parent_env
+                .union(&env).cloned().collect();
+            new_parent_env = new_parent_env
+                .union(&parent_env).cloned().collect();
 
             let new_env : HashSet<String> = args.into_iter().collect();
 
@@ -322,7 +334,6 @@ fn convert_to_closures(env: &HashSet<String>, expr: SExpr, toplevel_funs: &HashS
             for arg in args.clone() {
                 new_env.insert(arg);
             }
-
             let (converted_body, body_defines) =
                 convert_to_closures(&new_env, *body, toplevel_funs);
 
@@ -469,13 +480,12 @@ fn convert_to_closures(env: &HashSet<String>, expr: SExpr, toplevel_funs: &HashS
             let mut toplevel_funs = toplevel_funs.clone();
 
             for def in defines.clone() {
+                toplevel_funs.insert(get_define_name(&def));
                 let (converted_define, new_defines) =
                     convert_to_closures(env, def.clone(), &toplevel_funs);
 
                 converted_defines.push(converted_define);
                 defines_new_defines.extend_from_slice(&new_defines);
-
-                toplevel_funs.insert(get_define_name(&def));
             }
 
             let (converted_main, main_defines) =
