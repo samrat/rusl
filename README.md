@@ -12,6 +12,14 @@ A minimal Lisp that compiles to x86-64.
 (fibo 6)
 ```
 
+## Trying out rusl
+
+```shell
+make test SRC=list_example && ./a.out
+```
+
+OR
+
 ```shell
 cargo run foo.txt > test.s
 nasm -f elf64 test.s
