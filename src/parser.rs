@@ -18,9 +18,11 @@ pub enum SExpr {
     Number(i64),
     Bool(bool),
     List(Vec<SExpr>),
+    FuncName(String),           // for closure-conversion
 
     Define(String, Vec<String>, Box<SExpr>),
     Let(Vec<(String, SExpr)>, Box<SExpr>),
+    Lambda(Vec<String>, Box<SExpr>),
     If(Box<SExpr>, Box<SExpr>, Box<SExpr>),
     Tuple(Vec<SExpr>),
     Cmp(CC, Box<SExpr>, Box<SExpr>),
@@ -129,6 +131,11 @@ pub fn get_ast(expr: &SExpr) -> SExpr {
                             astified_bindings.push((keyname, get_ast(&val)));
                         }
                         return SExpr::Let(astified_bindings, Box::new(get_ast(&body)));
+                    },
+                &[SExpr::Symbol(ref k), SExpr::List(ref args), ref body]
+                    if k == "lambda" => {
+                        return SExpr::Lambda(get_arg_names(&args.to_vec()),
+                                             box get_ast(body));
                     },
                 &[SExpr::Symbol(ref k), _..]
                     if k == "tuple" => {

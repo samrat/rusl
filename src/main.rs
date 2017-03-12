@@ -1,5 +1,5 @@
 #![feature(advanced_slice_patterns, slice_patterns)]
-#![feature(box_syntax)]
+#![feature(box_syntax, box_patterns)]
 
 use std::io;
 use std::collections::HashMap;
@@ -29,7 +29,7 @@ use anf::flatten;
 
 
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Hash, Eq)]
 enum Reg {
     AL,
 
@@ -37,12 +37,13 @@ enum Reg {
     R8, R9, R10, R11, R12, R13, R14, R15,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, Hash, PartialEq)]
 enum X86Arg {
     Reg(Reg),
     Imm(u64),
     RegOffset(Reg, i64),
     GlobalVal(String),
+    FuncName(String),
     Var(String),     // pseudo-x86
 }
 
@@ -96,7 +97,7 @@ enum X86 {
                       Vec<X86>,     // main-instructions
                       i64,          // stack size
     ),
-    Call(String),
+    Call(X86Arg),
     JmpIf(CC, String),
     Jmp(String),
     Label(String),
@@ -138,8 +139,11 @@ fn uniquify(mapping: &mut HashMap<String, String>, expr: SExpr)
         SExpr::Symbol(name) => {
             SExpr::Symbol(mapping.get(&name).unwrap().to_string())
         },
+        SExpr::FuncName(_) => panic!("FuncName should not be used before closure-conversion"),
         SExpr::Number(_) => expr,
         SExpr::Bool(_) => expr,
+        // TODO
+        SExpr::Lambda(_, _) => expr,
         SExpr::Tuple(elts) => {
             let elts = elts.iter()
                 .map(|e| uniquify(mapping, e.clone()))
@@ -202,10 +206,277 @@ fn uniquify(mapping: &mut HashMap<String, String>, expr: SExpr)
     }
 }
 
+fn get_free_variables(env: &HashSet<String>,
+                      parent_env: &HashSet<String>,
+                      expr: SExpr) -> Vec<String> {
+    match expr {
+        SExpr::Number(_) => vec![],
+        SExpr::Symbol(name) => {
+            match env.get(&name) {
+                Some(_) => vec![],
+                None => {
+                    match parent_env.get(&name) {
+                        Some(_) => vec![name],
+                        None => panic!("no binding found in parent env for free-variable {}", name),
+                    }
+                }
+            }
+        },
+        SExpr::If(cnd, thn, els) => {
+            let mut cnd_freevars =
+                get_free_variables(env, parent_env, *cnd);
+            let thn_freevars =
+                get_free_variables(env, parent_env, *thn);
+            let els_freevars = get_free_variables(env, parent_env, *els);
+
+            cnd_freevars.extend_from_slice(&thn_freevars);
+            cnd_freevars.extend_from_slice(&els_freevars);
+
+            return cnd_freevars;
+        },
+        SExpr::Define(_, args, body) |
+        SExpr::Lambda(args, body) => {
+            let mut new_parent_env = HashSet::new();
+            new_parent_env = new_parent_env.union(&env).cloned().collect();
+            new_parent_env = new_parent_env.union(&parent_env).cloned().collect();
+
+            let new_env : HashSet<String> = args.into_iter().collect();
+
+            return get_free_variables(&new_env, &new_parent_env, *body);
+        },
+        SExpr::Let(bindings, body) => {
+            let mut new_env = HashSet::new();
+            let mut bindings_free_vars = vec![];
+            for (k, v) in bindings {
+                let v_freevars =
+                    get_free_variables(env, parent_env, v);
+                new_env.insert(k);
+                bindings_free_vars.extend_from_slice(&v_freevars);
+            }
+
+            new_env = new_env.union(&env).cloned().collect();
+            let body_freevars = get_free_variables(&new_env,
+                                                   parent_env,
+                                                   *body);
+            bindings_free_vars.extend_from_slice(&body_freevars);
+
+            return bindings_free_vars;
+        },
+        SExpr::App(f, args) => {
+            let mut args_freevars = vec![];
+            for arg in args {
+                let arg_freevars =
+                    get_free_variables(env,
+                                       parent_env,
+                                       arg);
+                args_freevars.extend_from_slice(&arg_freevars);
+            }
+
+            return args_freevars;
+        },
+        _ => panic!("NYI: {:?}", expr),
+    }
+}
+
+fn symbol_is_primitive(sym: &str) -> bool {
+    match sym {
+        "+" | "-" | "tuple-ref" | "tuple" => true,
+        _ => false,
+    }
+}
+
+fn convert_to_closures(env: &HashSet<String>, expr: SExpr)
+                       -> (SExpr, Vec<SExpr>) {
+    match expr.clone() {
+        SExpr::Cmp(_, _, _) |
+        SExpr::Bool(_) |
+        SExpr::Symbol(_) |
+        SExpr::Number(_) => (expr, vec![]),
+        SExpr::If(cnd, thn, els) => {
+            let (converted_cnd, mut cnd_defines) =
+                convert_to_closures(env, *cnd);
+            let (converted_thn, thn_defines) =
+                convert_to_closures(env, *thn);
+            let (converted_els, els_defines) =
+                convert_to_closures(env, *els);
+
+            let converted = SExpr::If(box converted_cnd,
+                                      box converted_thn,
+                                      box converted_els);
+
+            cnd_defines.extend_from_slice(&thn_defines);
+            cnd_defines.extend_from_slice(&els_defines);
+
+            return (converted, cnd_defines);
+        },
+        SExpr::Define(name, mut args, body) => {
+            let mut new_env = env.clone();
+            for arg in args.clone() {
+                new_env.insert(arg);
+            }
+
+            let (converted_body, body_defines) =
+                convert_to_closures(&new_env, *body);
+
+            args.insert(0, "clos".to_string());
+
+            let converted = SExpr::Define(name,
+                                          args,
+                                          box converted_body);
+
+            return (converted, body_defines);
+
+        },
+        SExpr::Lambda(mut args, body) => {
+            let mut new_env = env.clone();
+            for arg in args.clone() {
+                new_env.insert(arg);
+            }
+
+            let (converted_body, new_defines) =
+                convert_to_closures(&new_env, *body);
+
+            let lambda_name = get_unique_varname("lam");
+            let free_vars = get_free_variables(env,
+                                               &HashSet::new(),
+                                               expr);
+            let mut load_free_vars = converted_body;
+            for (i, fvar) in free_vars.iter().enumerate() {
+                let bindings = vec![(fvar.to_string(),
+                                     SExpr::App(box SExpr::Symbol("tuple-ref".to_string()),
+                                                vec![SExpr::Symbol("clos".to_string()),
+                                                     SExpr::Number((i+1) as i64)]))];
+                load_free_vars =
+                    SExpr::Let(bindings,
+                               box load_free_vars);
+            }
+
+            args.insert(0, "clos".to_string());
+
+            let mut closure_elts =
+                vec![SExpr::FuncName(lambda_name.clone())];
+
+            let free_vars : Vec<SExpr> =
+                free_vars.iter().map(|fv| SExpr::Symbol(fv.to_string())).collect();
+            closure_elts.extend_from_slice(&free_vars[..]);
+            let closure = SExpr::Tuple(closure_elts);
+
+            return (closure,
+                    vec![SExpr::Define(lambda_name,
+                                       args, box load_free_vars)]);
+        },
+        SExpr::Tuple(elts) => {
+            let mut converted_elts = vec![];
+            let mut elts_defines = vec![];
+
+            for elt in elts.clone() {
+                let (conv_elt, elt_defines) =
+                    convert_to_closures(env, elt);
+                converted_elts.push(conv_elt);
+                elts_defines.extend_from_slice(&elt_defines);
+            }
+
+            let converted = SExpr::Tuple(converted_elts);
+            return (converted, elts_defines);
+
+        },
+        SExpr::App(box SExpr::Symbol(ref f), ref args)
+            if symbol_is_primitive(f) => {
+                let mut converted_args = vec![];
+                let mut args_defines = vec![];
+
+                for arg in args.clone() {
+                    let (conv_arg, arg_defines) =
+                        convert_to_closures(env, arg);
+                    converted_args.push(conv_arg);
+                    args_defines.extend_from_slice(&arg_defines);
+                }
+
+                let converted = SExpr::App(box SExpr::Symbol(f.to_string()),
+                                           converted_args);
+                return (converted, args_defines);
+            },
+        SExpr::App(box SExpr::Symbol(ref f), ref args)
+            if !symbol_is_primitive(f) => {
+                let (fclos, fdefines) =
+                    convert_to_closures(env, SExpr::Symbol(f.clone()));
+                let f_temp = get_unique_varname("tmp");
+
+                let mut converted_args =
+                    vec![SExpr::Symbol(f_temp.clone())];
+                let mut args_defines = vec![];
+
+                for arg in args.clone() {
+                    let (conv_arg, arg_defines) =
+                        convert_to_closures(env, arg);
+                    converted_args.push(conv_arg);
+                    args_defines.extend_from_slice(&arg_defines);
+                }
+
+                args_defines.extend_from_slice(&fdefines);
+
+                let converted = SExpr::Let(vec![(f_temp.clone(), fclos)],
+                                           box SExpr::App(
+                                               box SExpr::App(box SExpr::Symbol("tuple-ref".to_string()),
+                                                              vec![SExpr::Symbol(f_temp),
+                                                                   SExpr::Number(0)]),
+                                               converted_args));
+                return (converted, args_defines);
+            },
+        SExpr::Let(bindings, body) => {
+            let mut new_bindings = vec![];
+            let mut bindings_defines = vec![];
+            let mut new_env = env.clone();
+
+            for (k, v) in bindings {
+                let (converted_v, v_defines) =
+                    convert_to_closures(env, v);
+
+                new_env.insert(k.clone());
+                new_bindings.push((k, converted_v));
+                bindings_defines.extend_from_slice(&v_defines);
+            };
+
+            let (converted_body, body_defines) =
+                convert_to_closures(&new_env, *body);
+
+            bindings_defines.extend_from_slice(&body_defines);
+
+            let converted = SExpr::Let(new_bindings,
+                                       box converted_body);
+            return (converted, bindings_defines);
+        },
+        SExpr::Prog(mut defines, main) => {
+            let mut converted_defines = vec![];
+            let mut defines_new_defines = vec![];
+            for def in defines.clone() {
+                let (converted_define, new_defines) =
+                    convert_to_closures(env, def);
+
+                converted_defines.push(converted_define);
+                defines_new_defines.extend_from_slice(&new_defines);
+            }
+
+            let (converted_main, main_defines) =
+                convert_to_closures(env, *main);
+
+            defines.extend_from_slice(&defines_new_defines);
+            defines.extend_from_slice(&main_defines);
+
+            let converted = SExpr::Prog(defines,
+                                        box converted_main);
+
+            return (converted, vec![]);
+        },
+        _ => panic!("NYI: {:?}", expr),
+    }
+}
+
 
 fn flat_arg_type(v: &Flat) -> X86Arg {
     match v {
         &Flat::Symbol(ref name) => X86Arg::Var(name.clone()),
+        &Flat::FuncName(ref name) => X86Arg::FuncName(name.clone()),
         &Flat::Number(n) => X86Arg::Imm((n << 1) as u64),
         &Flat::Bool(b) => {
             match b {
@@ -314,7 +585,7 @@ fn flat_to_px86(instr: Flat) -> Vec<X86> {
                         }
 
                         instrs.extend_from_slice(&[
-                            X86::Call(f),
+                            X86::Call(X86Arg::FuncName(f)),
                         ]);
 
                         // pop caller-save regs
@@ -699,7 +970,9 @@ fn assign_homes_to_op2(locs: &HashMap<String, X86Arg>,
         },
         (_, X86Arg::Var(s)) =>
             (dest, locs.get(&s).unwrap().clone()),
-
+        (_, X86Arg::FuncName(s)) => {
+            (dest, src)
+        },
         (X86Arg::RegOffset(_, _), X86Arg::Imm(_)) |
         (X86Arg::GlobalVal(_), X86Arg::Imm(_)) |
         (X86Arg::Imm(_), X86Arg::Imm(_)) |
@@ -761,10 +1034,18 @@ fn assign_homes_to_instrs(instrs: Vec<X86>, locs: HashMap<String, X86Arg>) -> Ve
 
                 new_instrs.push(X86::Neg(new_n))
             }
+            X86::Call(X86Arg::FuncName(ref fname)) => {
+                match locs.get(&fname.clone()) {
+                    Some(home) => {
+                        new_instrs.push(X86::Call(home.clone()))
+                    },
+                    _ => new_instrs.push(i.clone()),
+                }
+            },
             X86::Set(X86Arg::Reg(_), _) |
             X86::Push(_) | X86::Pop(_) |
-            X86::Sub(X86Arg::Reg(_), X86Arg::Imm(_)) |
-            X86::Call(_) => {
+            X86::Sub(X86Arg::Reg(_), X86Arg::Imm(_))
+                => {
                 new_instrs.push(i);
             },
             _ => panic!("NYI: {:?}", i),
@@ -987,8 +1268,9 @@ fn print_x86_arg(arg: X86Arg) -> String {
                         offset)
             }
         },
+        X86Arg::FuncName(f) => format!("{}", f),
         X86Arg::GlobalVal(g) => format!("QWORD [rel {}]", g),
-        _ => panic!("invalid arg type"),
+        _ => panic!("invalid arg type: {:?}", arg),
     }
 }
 
@@ -1021,7 +1303,7 @@ fn print_instr(instr: X86) -> String {
                                          label),
         X86::Jmp(label) => format!("jmp {}", label),
         X86::Label(label) => format!("{}:", label),
-        X86::Call(label) => format!("call {}", label),
+        X86::Call(label) => format!("call {}", print_x86_arg(label)),
         X86::Set(X86Arg::Reg(r), cc) =>
             format!("set{} {}", print_cc(cc), display_reg(&r)),
         X86::MovZx(dest, src) => format!("movzx {}, {}",
@@ -1151,11 +1433,14 @@ fn read_input() -> io::Result<()> {
     let uniquified = uniquify(&mut uniquify_mapping,
                               SExpr::Prog(toplevel[..toplevel.len()-1].to_vec(),
                                           Box::new(toplevel[toplevel.len()-1].clone())));
-    let flattened = flatten(uniquified);
 
+    let (closures_converted, _) =
+        convert_to_closures(&HashSet::new(), uniquified);
+
+    let flattened = flatten(closures_converted);
     let instrs = select_instructions(flattened);
-    let instrs = uncover_live(instrs);
 
+    let instrs = uncover_live(instrs);
     let homes_assigned = assign_homes(instrs);
 
     let ifs_lowered = lower_conditionals(homes_assigned);
