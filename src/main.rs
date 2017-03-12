@@ -122,6 +122,11 @@ const ARG_REG_ORDER : [Reg; 6] = [Reg::RDI,
                                   Reg::RCX,
                                   Reg::R8,
                                   Reg::R9];
+
+// NOTE: registers to use during register allocation. Currently,
+// registers that are used in passing arguments are excluded because
+// the register allocation pass does not account for interferences
+// between registers and variables.
 const REGS : [Reg;5] = [
     // callee-save
     Reg::RBX, Reg::R12, Reg::R13, Reg::R14, // Reg::R15,
