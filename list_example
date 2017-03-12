@@ -12,8 +12,5 @@
       0
       (+ (car l) (sum (cdr l)))))
 
-;; (let ((mylist (cons 1 (cons 2 (cons 3 #f)))))
-;;   (sum mylist))
-
-(let ((foo (lambda (x) (+ x 1))))
-  (foo 12))
+(let ((mylist (cons 1 (cons 2 (cons 3 #f)))))
+  (sum mylist))

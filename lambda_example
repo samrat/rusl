@@ -1,0 +1,5 @@
+(define (adder x)
+  (lambda (y) (+ x y)))
+
+(let ((add1 (adder 1)))
+  (add1 40))
