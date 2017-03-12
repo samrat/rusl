@@ -294,20 +294,9 @@ pub fn flatten(expr: SExpr) -> FlatResult {
                                                     tup_vars);
                         },
                         f => {
-                            let app_temp = get_unique_varname("tmp");
-
-                            let (flat_args, mut args_assigns, mut args_vars) =
-                                flatten_args(&args);
-
-                            args_assigns.extend_from_slice(&[
-                                Flat::Assign(app_temp.to_string(),
-                                             box Flat::App(f.to_string(), flat_args))
-                            ]);
-                            args_vars.extend_from_slice(&[app_temp.clone()]);
-
-                            return FlatResult::Flat(Flat::Symbol(app_temp),
-                                                    args_assigns,
-                                                    args_vars);
+                            return flatten(SExpr::App(box SExpr::Symbol("tuple-ref".to_string()),
+                                                      vec![SExpr::Tuple(vec![SExpr::FuncName(f.to_string())]),
+                                                           SExpr::Number(0)]));
                         },
                     }
                 },

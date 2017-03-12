@@ -262,7 +262,7 @@ fn get_free_variables(env: &HashSet<String>,
 
             return bindings_free_vars;
         },
-        SExpr::App(f, args) => {
+        SExpr::App(_, args) => {
             let mut args_freevars = vec![];
             for arg in args {
                 let arg_freevars =
@@ -285,20 +285,28 @@ fn symbol_is_primitive(sym: &str) -> bool {
     }
 }
 
-fn convert_to_closures(env: &HashSet<String>, expr: SExpr)
+fn get_define_name(def: &SExpr) -> String {
+    match def {
+        &SExpr::Define(ref name, _, _) => name.to_string(),
+        &_ => panic!("not a Define"),
+    }
+}
+
+fn convert_to_closures(env: &HashSet<String>, expr: SExpr, toplevel_funs: &HashSet<String>)
                        -> (SExpr, Vec<SExpr>) {
     match expr.clone() {
         SExpr::Cmp(_, _, _) |
         SExpr::Bool(_) |
         SExpr::Symbol(_) |
+        SExpr::FuncName(_) |
         SExpr::Number(_) => (expr, vec![]),
         SExpr::If(cnd, thn, els) => {
             let (converted_cnd, mut cnd_defines) =
-                convert_to_closures(env, *cnd);
+                convert_to_closures(env, *cnd, toplevel_funs);
             let (converted_thn, thn_defines) =
-                convert_to_closures(env, *thn);
+                convert_to_closures(env, *thn, toplevel_funs);
             let (converted_els, els_defines) =
-                convert_to_closures(env, *els);
+                convert_to_closures(env, *els, toplevel_funs);
 
             let converted = SExpr::If(box converted_cnd,
                                       box converted_thn,
@@ -316,7 +324,7 @@ fn convert_to_closures(env: &HashSet<String>, expr: SExpr)
             }
 
             let (converted_body, body_defines) =
-                convert_to_closures(&new_env, *body);
+                convert_to_closures(&new_env, *body, toplevel_funs);
 
             args.insert(0, "clos".to_string());
 
@@ -333,8 +341,8 @@ fn convert_to_closures(env: &HashSet<String>, expr: SExpr)
                 new_env.insert(arg);
             }
 
-            let (converted_body, new_defines) =
-                convert_to_closures(&new_env, *body);
+            let (converted_body, mut new_defines) =
+                convert_to_closures(&new_env, *body, toplevel_funs);
 
             let lambda_name = get_unique_varname("lam");
             let free_vars = get_free_variables(env,
@@ -361,9 +369,12 @@ fn convert_to_closures(env: &HashSet<String>, expr: SExpr)
             closure_elts.extend_from_slice(&free_vars[..]);
             let closure = SExpr::Tuple(closure_elts);
 
-            return (closure,
-                    vec![SExpr::Define(lambda_name,
-                                       args, box load_free_vars)]);
+            new_defines.extend_from_slice(&[
+                SExpr::Define(lambda_name,
+                              args, box load_free_vars)
+            ]);
+
+            return (closure, new_defines);
         },
         SExpr::Tuple(elts) => {
             let mut converted_elts = vec![];
@@ -371,7 +382,7 @@ fn convert_to_closures(env: &HashSet<String>, expr: SExpr)
 
             for elt in elts.clone() {
                 let (conv_elt, elt_defines) =
-                    convert_to_closures(env, elt);
+                    convert_to_closures(env, elt, toplevel_funs);
                 converted_elts.push(conv_elt);
                 elts_defines.extend_from_slice(&elt_defines);
             }
@@ -387,7 +398,7 @@ fn convert_to_closures(env: &HashSet<String>, expr: SExpr)
 
                 for arg in args.clone() {
                     let (conv_arg, arg_defines) =
-                        convert_to_closures(env, arg);
+                        convert_to_closures(env, arg, toplevel_funs);
                     converted_args.push(conv_arg);
                     args_defines.extend_from_slice(&arg_defines);
                 }
@@ -398,8 +409,14 @@ fn convert_to_closures(env: &HashSet<String>, expr: SExpr)
             },
         SExpr::App(box SExpr::Symbol(ref f), ref args)
             if !symbol_is_primitive(f) => {
+                let fname = match toplevel_funs.get(f) {
+                    Some(_) => SExpr::Tuple(vec![SExpr::FuncName(f.to_string())]),
+                    None => SExpr::Symbol(f.to_string()),
+                };
+
                 let (fclos, fdefines) =
-                    convert_to_closures(env, SExpr::Symbol(f.clone()));
+                    convert_to_closures(env, fname,
+                                        toplevel_funs);
                 let f_temp = get_unique_varname("tmp");
 
                 let mut converted_args =
@@ -408,7 +425,7 @@ fn convert_to_closures(env: &HashSet<String>, expr: SExpr)
 
                 for arg in args.clone() {
                     let (conv_arg, arg_defines) =
-                        convert_to_closures(env, arg);
+                        convert_to_closures(env, arg, toplevel_funs);
                     converted_args.push(conv_arg);
                     args_defines.extend_from_slice(&arg_defines);
                 }
@@ -430,7 +447,7 @@ fn convert_to_closures(env: &HashSet<String>, expr: SExpr)
 
             for (k, v) in bindings {
                 let (converted_v, v_defines) =
-                    convert_to_closures(env, v);
+                    convert_to_closures(env, v, toplevel_funs);
 
                 new_env.insert(k.clone());
                 new_bindings.push((k, converted_v));
@@ -438,7 +455,7 @@ fn convert_to_closures(env: &HashSet<String>, expr: SExpr)
             };
 
             let (converted_body, body_defines) =
-                convert_to_closures(&new_env, *body);
+                convert_to_closures(&new_env, *body, toplevel_funs);
 
             bindings_defines.extend_from_slice(&body_defines);
 
@@ -446,24 +463,28 @@ fn convert_to_closures(env: &HashSet<String>, expr: SExpr)
                                        box converted_body);
             return (converted, bindings_defines);
         },
-        SExpr::Prog(mut defines, main) => {
+        SExpr::Prog(defines, main) => {
             let mut converted_defines = vec![];
             let mut defines_new_defines = vec![];
+            let mut toplevel_funs = toplevel_funs.clone();
+
             for def in defines.clone() {
                 let (converted_define, new_defines) =
-                    convert_to_closures(env, def);
+                    convert_to_closures(env, def.clone(), &toplevel_funs);
 
                 converted_defines.push(converted_define);
                 defines_new_defines.extend_from_slice(&new_defines);
+
+                toplevel_funs.insert(get_define_name(&def));
             }
 
             let (converted_main, main_defines) =
-                convert_to_closures(env, *main);
+                convert_to_closures(env, *main, &toplevel_funs);
 
-            defines.extend_from_slice(&defines_new_defines);
-            defines.extend_from_slice(&main_defines);
+            converted_defines.extend_from_slice(&defines_new_defines);
+            converted_defines.extend_from_slice(&main_defines);
 
-            let converted = SExpr::Prog(defines,
+            let converted = SExpr::Prog(converted_defines,
                                         box converted_main);
 
             return (converted, vec![]);
@@ -496,6 +517,8 @@ fn flat_to_px86(instr: Flat) -> Vec<X86> {
     match instr {
         Flat::Assign(dest, e) => {
             match *e {
+                Flat::FuncName(name) => vec![X86::Mov(X86Arg::Var(dest),
+                                                      X86Arg::FuncName(name))],
                 Flat::Symbol(name) => vec![X86::Mov(X86Arg::Var(dest),
                                                     X86Arg::Var(name))],
                 Flat::Number(n) => vec![X86::Mov(X86Arg::Var(dest),
@@ -970,7 +993,7 @@ fn assign_homes_to_op2(locs: &HashMap<String, X86Arg>,
         },
         (_, X86Arg::Var(s)) =>
             (dest, locs.get(&s).unwrap().clone()),
-        (_, X86Arg::FuncName(s)) => {
+        (_, X86Arg::FuncName(_)) => {
             (dest, src)
         },
         (X86Arg::RegOffset(_, _), X86Arg::Imm(_)) |
@@ -1435,11 +1458,11 @@ fn read_input() -> io::Result<()> {
                                           Box::new(toplevel[toplevel.len()-1].clone())));
 
     let (closures_converted, _) =
-        convert_to_closures(&HashSet::new(), uniquified);
+        convert_to_closures(&HashSet::new(), uniquified, &HashSet::new());
 
     let flattened = flatten(closures_converted);
-    let instrs = select_instructions(flattened);
 
+    let instrs = select_instructions(flattened);
     let instrs = uncover_live(instrs);
     let homes_assigned = assign_homes(instrs);
 
