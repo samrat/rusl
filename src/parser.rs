@@ -181,7 +181,7 @@ pub fn read(ls: &mut LexerState) -> SExpr {
 
 #[test]
 fn test_parser() {
-    let mut input = String::from("(if #f (+ 42 (foo 12)) 17)
+    let input = String::from("(if #f (+ 42 (foo 12)) 17)
                                   (define (foo x y z) (+ x 10))
                                   (+ 1 2)");
     let mut lexer = LexerState {

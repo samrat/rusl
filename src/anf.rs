@@ -121,7 +121,7 @@ pub fn flatten(expr: SExpr) -> FlatResult {
                                     bindings_assigns,
                                     bindings_vars);
         },
-        SExpr::List(elts) => {
+        SExpr::List(_) => {
             panic!("NYI");
         },
         SExpr::Define(name, args, body) => {
@@ -363,7 +363,7 @@ fn test_flatten() {
     use lexer::LexerState;
     use parser::read;
 
-    let mut input = String::from("(+ 12 (+ 13 14))");
+    let input = String::from("(+ 12 (+ 13 14))");
     let mut lexer = LexerState {
         s: input,
         pos: 0,
