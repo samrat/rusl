@@ -15,21 +15,12 @@ pub struct LexerState {
     pub tok_buf: Option<Token>,
 }
 
-fn is_valid_symbol_start(c: char) -> bool {
-    // TODO: avoid allocatiing this in each call
-    let symbol_start_chars = vec!['+', '-', '*', '/', '#', '<', '>',
-                                  '='];
-
-    let mut ret = false;
-    if c.is_alphabetic() { ret = true; }
-    else {
-        for s in symbol_start_chars {
-            if c == s { ret = true; break; }
-            else { continue; }
-        }
+fn is_valid_in_symbol(c: char) -> bool {
+    c.is_alphabetic() ||
+    match c {
+        '+' | '-' | '*' | '/' | '#' | '<' | '>' | '=' => true,
+        _ => false,
     }
-
-    return ret;
 }
 
 pub fn get_token(ls: &mut LexerState) -> Token {
@@ -55,10 +46,10 @@ pub fn get_token(ls: &mut LexerState) -> Token {
                 }
                 return Token::Number(acc.parse().unwrap());
             }
-            else if is_valid_symbol_start(c) {
+            else if is_valid_in_symbol(c) {
                 let mut acc = String::new();
                 let mut s = c;
-                while s.is_alphanumeric() || is_valid_symbol_start(s) {
+                while s.is_alphanumeric() || is_valid_in_symbol(s) {
                     acc.push(s);
                     iter.next();
                     ls.pos += 1;
