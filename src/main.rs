@@ -1201,6 +1201,10 @@ fn lower_conditionals(prog: X86) -> X86 {
 
 fn patch_single_instr(instr: X86) -> Vec<X86> {
     match instr {
+        // src and dest of Mov are same
+        X86::Mov(ref dest, ref src) if src == dest => {
+            vec![]
+        },
         // both source and dest are indirect addresses
         X86::Mov(X86Arg::RegOffset(dest_reg, dest),
                  X86Arg::RegOffset(src_reg, src)) => {
