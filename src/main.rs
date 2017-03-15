@@ -106,10 +106,9 @@ enum X86 {
 const CONST_TRUE : u64  = 0xffffffffffffffff;
 const CONST_FALSE : u64 = 0x7fffffffffffffff;
 
-// R15 is used to point to rootstack
 // R11 is used to point to heap
-const CALLEE_SAVE_REGS : [Reg;4] =
-    [Reg::RBX, Reg::R12, Reg::R13, Reg::R14, // Reg::R15
+const CALLEE_SAVE_REGS : [Reg;5] =
+    [Reg::RBX, Reg::R12, Reg::R13, Reg::R14, Reg::R15
     ];
 const CALLER_SAVE_REGS : [Reg;7] =
     [Reg::RDX, Reg::RCX, Reg::RSI, Reg::RDI,
@@ -127,9 +126,9 @@ const ARG_REG_ORDER : [Reg; 6] = [Reg::RDI,
 // registers that are used in passing arguments are excluded because
 // the register allocation pass does not account for interferences
 // between registers and variables.
-const REGS : [Reg;5] = [
+const REGS : [Reg;6] = [
     // callee-save
-    Reg::RBX, Reg::R12, Reg::R13, Reg::R14, // Reg::R15,
+    Reg::RBX, Reg::R12, Reg::R13, Reg::R14, Reg::R15,
 
     // caller-save
     Reg::R10,
@@ -1418,8 +1417,7 @@ main:
     mov rbp, rsp
 {}
     sub rsp, {}
-    call initialize
-    mov r15, [rel heap]\n", save_callee_save_regs, stack_size);
+    call initialize\n", save_callee_save_regs, stack_size);
             let postlude = format!("    mov rdi, rax
     call print
     add rsp, {}
@@ -1480,7 +1478,6 @@ fn read_input() -> io::Result<()> {
         convert_to_closures(&HashSet::new(), uniquified, &HashSet::new());
 
     let flattened = flatten(closures_converted);
-
     let instrs = select_instructions(flattened);
     let instrs = uncover_live(instrs);
     let homes_assigned = assign_homes(instrs);
