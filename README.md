@@ -14,6 +14,9 @@ A minimal Lisp that compiles to x86-64.
 
 ## Trying out rusl
 
+You need to have `Cargo`, `gcc` and `nasm` installed. Currently,
+`rusl` requires the nightly version of Rust.
+
 ```shell
 make test SRC=list_example && ./a.out
 ```

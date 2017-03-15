@@ -12,5 +12,10 @@
       0
       (+ (car l) (sum (cdr l)))))
 
+(define (length l)
+  (if (= l #f)
+      0
+      (+ 1 (length (cdr l)))))
+
 (let ((mylist (cons 1 (cons 2 (cons 3 #f)))))
   (sum mylist))
