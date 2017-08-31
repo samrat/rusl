@@ -587,11 +587,11 @@ fn flat_to_px86(instr: Flat) -> Vec<X86> {
                                         process::exit(0);
                                     },
                                 };
-                                return vec![
-                                    X86::Mov(X86Arg::Var(dest.clone()),
-                                             flat_arg_type(arg)),
-                                    X86::Neg(X86Arg::Var(dest.clone()))
-                                ];
+                                let mut ret = vec![X86::Mov(X86Arg::Var(dest.clone()),
+                                                            flat_arg_type(arg))];
+                                ret.extend_from_slice(&ensure_number(flat_arg_type(arg)));
+                                ret.push(X86::Neg(X86Arg::Var(dest.clone())));
+                                return ret;
                             },
                             "tuple-ref" => {
                                 let (tuple, index) = match &args[..] {
