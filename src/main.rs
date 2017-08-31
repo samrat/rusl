@@ -529,8 +529,8 @@ fn flat_arg_type(v: &Flat) -> X86Arg {
     }
 }
 
-// Checks that a is an integer(ie. least-significant bit of `a` is
-// zero)
+// Emits runtime checks to verify that a is an
+// integer(ie. least-significant bit of `a` is zero)
 fn ensure_number(a: X86Arg) -> Vec<X86> {
     vec![X86::Push(Reg::RCX),
          X86::Mov(X86Arg::Reg(Reg::RCX), a),
@@ -539,6 +539,39 @@ fn ensure_number(a: X86Arg) -> Vec<X86> {
          X86::Jne(String::from("internal_error_non_number")),
          X86::Pop(Reg::RCX)]
 }
+
+// Same as ensure_number but for booleans
+fn ensure_bool(a: X86Arg) -> Vec<X86> {
+    vec![X86::Push(Reg::RCX),
+         X86::Mov(X86Arg::Reg(Reg::RCX), a.clone()),
+         X86::And(X86Arg::Reg(Reg::RCX), X86Arg::Imm(1)),
+         X86::Cmp(X86Arg::Reg(Reg::RCX), X86Arg::Imm(0)),
+         X86::Je(String::from("internal_error_non_bool")),
+
+         // second least significant bit
+         X86::Mov(X86Arg::Reg(Reg::RCX), a),
+         X86::And(X86Arg::Reg(Reg::RCX), X86Arg::Imm(2)),
+         X86::Cmp(X86Arg::Reg(Reg::RCX), X86Arg::Imm(0)),
+         X86::Je(String::from("internal_error_non_bool")),
+         X86::Pop(Reg::RCX)]
+}
+
+fn ensure_tuple(a: X86Arg) -> Vec<X86> {
+    vec![X86::Push(Reg::RCX),
+         X86::Mov(X86Arg::Reg(Reg::RCX), a.clone()),
+         X86::And(X86Arg::Reg(Reg::RCX), X86Arg::Imm(1)),
+         X86::Cmp(X86Arg::Reg(Reg::RCX), X86Arg::Imm(0)),
+         X86::Je(String::from("internal_error_non_tuple")),
+
+         // second least significant bit
+         X86::Mov(X86Arg::Reg(Reg::RCX), a),
+         X86::And(X86Arg::Reg(Reg::RCX), X86Arg::Imm(2)),
+         X86::Cmp(X86Arg::Reg(Reg::RCX), X86Arg::Imm(0)),
+         X86::Jne(String::from("internal_error_non_bool")),
+
+         X86::Pop(Reg::RCX)]
+}
+
 
 // convert one Flat instruction to pseudo-x86
 fn flat_to_px86(instr: Flat) -> Vec<X86> {
@@ -607,14 +640,17 @@ fn flat_to_px86(instr: Flat) -> Vec<X86> {
                                     &_ => panic!("index to tuple-ref must be a literal number"),
                                 };
 
-                                return vec![
+                                let mut ret = ensure_tuple(flat_arg_type(tuple));
+                                ret.extend_from_slice(&[
                                     X86::Mov(X86Arg::Reg(Reg::R11), flat_arg_type(tuple)),
                                     // subtract 1 from tuple tag
                                     X86::Sub(X86Arg::Reg(Reg::R11), X86Arg::Imm(1)),
                                     // NOTE: first word contains count
                                     X86::Mov(X86Arg::Var(dest), X86Arg::RegOffset(Reg::R11,
                                                                                   8*(index+1)))
-                                ];
+                                ]);
+
+                                return ret;
                             },
                             _ => panic!("primitive not defined"),
                         }
@@ -1465,6 +1501,8 @@ extern heap
 extern rootstack
 extern free_ptr
 extern error_not_number
+extern error_not_bool
+extern error_not_tuple
 global main
 main:
     push rbp
@@ -1481,6 +1519,10 @@ main:
     ret
 internal_error_non_number:
     call error_not_number
+internal_error_non_bool:
+    call error_not_bool
+internal_error_non_tuple:
+    call error_not_tuple
 \n", stack_size, restore_callee_save_regs);
             let mut instrs_str = String::from(prelude);
             for i in instrs {

@@ -55,3 +55,13 @@ void error_not_number(int64_t val) {
   fprintf(stderr, "expected a number: %#010x\n", print(val));
   exit(1);
 }
+
+void error_not_bool(int64_t val) {
+  fprintf(stderr, "expected a boolean: %#010x\n", val);
+  exit(1);
+}
+
+void error_not_tuple(int64_t val) {
+  fprintf(stderr, "expected a tuple: %#010x\n", val);
+  exit(1);
+}
