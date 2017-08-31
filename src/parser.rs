@@ -4,8 +4,6 @@ use lexer::Token;
 use lexer::LexerState;
 use lexer::get_token;
 
-use log;
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum CC {
     // condition codes

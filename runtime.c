@@ -9,7 +9,7 @@ int64_t *free_ptr;
 const int64_t TRUE  = 0xffffffffffffffff;
 const int64_t FALSE = 0x7fffffffffffffff;
 
-int rec_print(int64_t val) {
+void rec_print(int64_t val) {
   if(val & 0x00000001 ^ 0x00000001) {
     printf("%" PRId64, val >> 1);
   }
@@ -38,7 +38,7 @@ int rec_print(int64_t val) {
   }
 }
 
-int print(int64_t val) {
+int64_t print(int64_t val) {
   rec_print(val);
   printf("\n");
   return val;
@@ -48,4 +48,10 @@ void initialize() {
   heap = malloc(200);
   rootstack = malloc(200);
   free_ptr = heap;
+}
+
+/* FIXME: right now, correct `val` is not passed */
+void error_not_number(int64_t val) {
+  fprintf(stderr, "expected a number: %#010x\n", print(val));
+  exit(1);
 }

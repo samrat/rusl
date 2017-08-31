@@ -1,12 +1,1 @@
-(define (fibo x)
-  ;; Get x-th Fibonacci number
-  (if (< x 2)
-      1
-      (+ (fibo (+ x (- 2)))
-         (fibo (+ x (- 1))))))
-
-(if (> 2 4)
-    (tuple 42
-           (tuple 1
-                  (let ((x (fibo 7))) x)))
-    (tuple-ref (tuple 42 24) 0))
+(if (> 4 3) 12 42)

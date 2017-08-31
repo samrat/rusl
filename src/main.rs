@@ -57,6 +57,7 @@ enum X86 {
     Sub(X86Arg, X86Arg),
     Neg(X86Arg),
     Cmp(X86Arg, X86Arg),
+    And(X86Arg, X86Arg),
     Push(Reg),
     Pop(Reg),
     Set(X86Arg, CC),
@@ -100,6 +101,8 @@ enum X86 {
     Call(X86Arg),
     JmpIf(CC, String),
     Jmp(String),
+    Je(String),
+    Jne(String),
     Label(String),
 }
 
@@ -526,6 +529,17 @@ fn flat_arg_type(v: &Flat) -> X86Arg {
     }
 }
 
+// Checks that a is an integer(ie. least-significant bit of `a` is
+// zero)
+fn ensure_number(a: X86Arg) -> Vec<X86> {
+    vec![X86::Push(Reg::RCX),
+         X86::Mov(X86Arg::Reg(Reg::RCX), a),
+         X86::And(X86Arg::Reg(Reg::RCX), X86Arg::Imm(1)),
+         X86::Cmp(X86Arg::Reg(Reg::RCX), X86Arg::Imm(0)),
+         X86::Jne(String::from("internal_error_non_number")),
+         X86::Pop(Reg::RCX)]
+}
+
 // convert one Flat instruction to pseudo-x86
 fn flat_to_px86(instr: Flat) -> Vec<X86> {
     match instr {
@@ -557,12 +571,13 @@ fn flat_to_px86(instr: Flat) -> Vec<X86> {
                                         process::exit(0);
                                     },
                                 };
-                                return vec![
-                                    X86::Mov(X86Arg::Var(dest.clone()),
-                                             flat_arg_type(arg1)),
-                                    X86::Add(X86Arg::Var(dest),
-                                             flat_arg_type(arg2))
-                                ];
+                                let mut ret = vec![X86::Mov(X86Arg::Var(dest.clone()),
+                                                            flat_arg_type(arg1))];
+                                ret.extend_from_slice(&ensure_number(flat_arg_type(arg1)));
+                                ret.push(X86::Add(X86Arg::Var(dest),
+                                                  flat_arg_type(arg2)));
+                                ret.extend_from_slice(&ensure_number(flat_arg_type(arg2)));
+                                return ret;
                             },
                             "-" => {
                                 let arg = match &args[..] {
@@ -637,10 +652,19 @@ fn flat_to_px86(instr: Flat) -> Vec<X86> {
                         return instrs;
                     },
                     Flat::Cmp(cc, left, right) => {
+                        let false_label = get_unique_varname("false");
+                        let done_label = get_unique_varname("done");
                         vec![X86::Cmp(flat_arg_type(&*left),
                                       flat_arg_type(&*right)),
                              X86::Set(X86Arg::Reg(Reg::AL), cc),
-                             X86::MovZx(X86Arg::Var(dest), X86Arg::Reg(Reg::AL))]
+                             X86::MovZx(X86Arg::Reg(Reg::RAX), X86Arg::Reg(Reg::AL)),
+                             X86::Cmp(X86Arg::Reg(Reg::RAX), X86Arg::Imm(0)),
+                             X86::Je(false_label.clone()),
+                             X86::Mov(X86Arg::Var(dest.clone()), X86Arg::Imm(CONST_TRUE)),
+                             X86::Jmp(done_label.clone()),
+                             X86::Label(false_label),
+                             X86::Mov(X86Arg::Var(dest), X86Arg::Imm(CONST_FALSE)),
+                             X86::Label(done_label),]
                     },
                     Flat::Tuple(elts) => {
                         // with count in first word
@@ -690,8 +714,8 @@ fn flat_to_px86(instr: Flat) -> Vec<X86> {
             let (eq_left, eq_right) = match *cnd {
                 x => match x {
                     // https://github.com/rust-lang/rust/issues/16223
-                    Flat::Number(_) => (flat_arg_type(&x), X86Arg::Imm(1)),
-                    Flat::Symbol(_) => (flat_arg_type(&x), X86Arg::Imm(1)),
+                    Flat::Number(_) => (flat_arg_type(&x), X86Arg::Imm(CONST_TRUE)),
+                    Flat::Symbol(_) => (flat_arg_type(&x), X86Arg::Imm(CONST_TRUE)),
                     _ => panic!("if cond needs to be Flat::EqP"),
                 },
             };
@@ -814,21 +838,33 @@ fn instruction_rw(instr: X86) -> (Vec<String>, Vec<String>, Vec<String>) {
                     vec![dest.clone(), src],
                     vec![dest]);
         },
+        X86::And(X86Arg::Var(dest), X86Arg::Var(src)) => {
+            return (vec![dest.clone(), src.clone()],
+                    vec![dest.clone(), src],
+                    vec![dest]);
+        },
         X86::Sub(X86Arg::Var(dest), _) |
         X86::Add(X86Arg::Var(dest), _) => {
             return (vec![dest.clone()],
                     vec![dest.clone()],
                     vec![dest]);
         },
-        X86::Sub(X86Arg::Reg(_), X86Arg::Imm(_)) |
-        X86::Add(X86Arg::GlobalVal(_), X86Arg::Imm(_)) |
-        X86::Push(_) | X86::Pop(_) | X86::Call(_) =>
-            return (vec![], vec![], vec![]),
+        X86::And(X86Arg::Var(dest), _) => {
+            return (vec![dest.clone()],
+                    vec![dest.clone()],
+                    vec![dest]);
+        },
         X86::Neg(X86Arg::Var(n)) => {
             return (vec![n.clone()],
                     vec![n.clone()],
                     vec![n.clone()]);
         },
+        X86::Sub(X86Arg::Reg(_), X86Arg::Imm(_)) |
+        X86::Add(X86Arg::GlobalVal(_), X86Arg::Imm(_)) |
+        X86::And(X86Arg::Reg(_), X86Arg::Imm(_)) |
+        X86::Push(_) | X86::Pop(_) | X86::Call(_) | X86::Jne(_) | X86::Je(_) |
+        X86::Label(_) | X86::Jmp(_) =>
+            return (vec![], vec![], vec![]),
         _ => panic!("NYI: {:?}", instr),
     }
 }
@@ -1058,6 +1094,10 @@ fn assign_homes_to_instrs(instrs: Vec<X86>, locs: HashMap<String, X86Arg>) -> Ve
                 let (new_dest, new_src) = assign_homes_to_op2(&locs, dest, src);
                 new_instrs.push(X86::Add(new_dest, new_src))
             },
+            X86::And(dest, src) => {
+                let (new_dest, new_src) = assign_homes_to_op2(&locs, dest, src);
+                new_instrs.push(X86::And(new_dest, new_src))
+            },
             X86::Cmp(left, right) => {
                 let (new_left, new_right) =
                     assign_homes_to_op2(&locs, left, right);
@@ -1081,7 +1121,8 @@ fn assign_homes_to_instrs(instrs: Vec<X86>, locs: HashMap<String, X86Arg>) -> Ve
             },
             X86::Set(X86Arg::Reg(_), _) |
             X86::Push(_) | X86::Pop(_) |
-            X86::Sub(X86Arg::Reg(_), X86Arg::Imm(_))
+            X86::Sub(X86Arg::Reg(_), X86Arg::Imm(_)) |
+            X86::Jmp(_) | X86::Jne(_) | X86::Je(_) | X86::Label(_)
                 => {
                 new_instrs.push(i);
             },
@@ -1212,6 +1253,13 @@ fn patch_single_instr(instr: X86) -> Vec<X86> {
                  X86::Mov(X86Arg::RegOffset(dest_reg, dest),
                           X86Arg::Reg(Reg::RAX))]
         },
+        X86::Mov(X86Arg::RegOffset(dest_reg, dest),
+                 X86Arg::GlobalVal(g)) => {
+            vec![X86::Mov(X86Arg::Reg(Reg::RAX),
+                          X86Arg::GlobalVal(g)),
+                 X86::Mov(X86Arg::RegOffset(dest_reg, dest),
+                          X86Arg::Reg(Reg::RAX))]
+        },
         X86::MovZx(X86Arg::RegOffset(dest_reg, offset),
                    src) => {
             vec![X86::MovZx(X86Arg::Reg(Reg::RAX), src),
@@ -1238,12 +1286,12 @@ fn patch_single_instr(instr: X86) -> Vec<X86> {
         },
         // cmp can't take imm64
         X86::Cmp(X86Arg::Imm(i), right) => {
-            vec![X86::Mov(X86Arg::Reg(Reg::RAX), X86Arg::Imm(i)),
-                 X86::Cmp(X86Arg::Reg(Reg::RAX), right)]
+            vec![X86::Mov(X86Arg::Reg(Reg::RDX), X86Arg::Imm(i)),
+                 X86::Cmp(X86Arg::Reg(Reg::RDX), right)]
         },
         X86::Cmp(left, X86Arg::Imm(i)) => {
-            vec![X86::Mov(X86Arg::Reg(Reg::RAX), X86Arg::Imm(i)),
-                 X86::Cmp(left, X86Arg::Reg(Reg::RAX))]
+            vec![X86::Mov(X86Arg::Reg(Reg::RDX), X86Arg::Imm(i)),
+                 X86::Cmp(left, X86Arg::Reg(Reg::RDX))]
         },
         _ => vec![instr],
     }
@@ -1309,7 +1357,7 @@ fn print_x86_arg(arg: X86Arg) -> String {
                         offset)
             }
         },
-        X86Arg::FuncName(f) => format!("{}", f),
+        // X86Arg::FuncName(f) => format!("{}", f),
         X86Arg::GlobalVal(g) => format!("QWORD [rel {}]", g),
         _ => panic!("invalid arg type: {:?}", arg),
     }
@@ -1333,6 +1381,9 @@ fn print_instr(instr: X86) -> String {
         X86::Add(dest, src) => format!("add {}, {}",
                                        print_x86_arg(dest),
                                        print_x86_arg(src)),
+        X86::And(dest, src) => format!("and {}, {}",
+                                       print_x86_arg(dest),
+                                       print_x86_arg(src)),
         X86::Sub(dest, src) => format!("sub {}, {}",
                                        print_x86_arg(dest),
                                        print_x86_arg(src)),
@@ -1343,6 +1394,8 @@ fn print_instr(instr: X86) -> String {
                                          print_cc(cc),
                                          label),
         X86::Jmp(label) => format!("jmp {}", label),
+        X86::Jne(label) => format!("jne {}", label),
+        X86::Je(label) => format!("je {}", label),
         X86::Label(label) => format!("{}:", label),
         X86::Call(label) => format!("call {}", print_x86_arg(label)),
         X86::Set(X86Arg::Reg(r), cc) =>
@@ -1411,6 +1464,7 @@ extern initialize
 extern heap
 extern rootstack
 extern free_ptr
+extern error_not_number
 global main
 main:
     push rbp
@@ -1424,7 +1478,10 @@ main:
 {}
     mov rsp, rbp
     pop rbp
-    ret\n", stack_size, restore_callee_save_regs);
+    ret
+internal_error_non_number:
+    call error_not_number
+\n", stack_size, restore_callee_save_regs);
             let mut instrs_str = String::from(prelude);
             for i in instrs {
                 instrs_str.push_str(&print_instr(i));
