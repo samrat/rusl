@@ -690,17 +690,22 @@ fn flat_to_px86(instr: Flat) -> Vec<X86> {
                     Flat::Cmp(cc, left, right) => {
                         let false_label = get_unique_varname("false");
                         let done_label = get_unique_varname("done");
-                        vec![X86::Cmp(flat_arg_type(&*left),
-                                      flat_arg_type(&*right)),
-                             X86::Set(X86Arg::Reg(Reg::AL), cc),
-                             X86::MovZx(X86Arg::Reg(Reg::RAX), X86Arg::Reg(Reg::AL)),
-                             X86::Cmp(X86Arg::Reg(Reg::RAX), X86Arg::Imm(0)),
-                             X86::Je(false_label.clone()),
-                             X86::Mov(X86Arg::Var(dest.clone()), X86Arg::Imm(CONST_TRUE)),
-                             X86::Jmp(done_label.clone()),
-                             X86::Label(false_label),
-                             X86::Mov(X86Arg::Var(dest), X86Arg::Imm(CONST_FALSE)),
-                             X86::Label(done_label),]
+
+                        let mut ret = ensure_number(flat_arg_type(&*left));
+
+                        ret.extend_from_slice(&ensure_number(flat_arg_type(&*right)));
+                        ret.extend_from_slice(&[X86::Cmp(flat_arg_type(&*left),
+                                                         flat_arg_type(&*right)),
+                                                X86::Set(X86Arg::Reg(Reg::AL), cc),
+                                                X86::MovZx(X86Arg::Reg(Reg::RAX), X86Arg::Reg(Reg::AL)),
+                                                X86::Cmp(X86Arg::Reg(Reg::RAX), X86Arg::Imm(0)),
+                                                X86::Je(false_label.clone()),
+                                                X86::Mov(X86Arg::Var(dest.clone()), X86Arg::Imm(CONST_TRUE)),
+                                                X86::Jmp(done_label.clone()),
+                                                X86::Label(false_label),
+                                                X86::Mov(X86Arg::Var(dest), X86Arg::Imm(CONST_FALSE)),
+                                                X86::Label(done_label),]);
+                        return ret;
                     },
                     Flat::Tuple(elts) => {
                         // with count in first word
