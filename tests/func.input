@@ -1,0 +1,10 @@
+(define (foo x)
+  x)
+
+(define (bar y)
+  (+ 1 (foo 1)))
+
+(define (baz z)
+  (+ z (bar z)))
+
+(baz 1)

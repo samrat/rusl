@@ -36,6 +36,9 @@ def run_test(test_name):
     asm_file = open(asm_path, "w")
     object_path = "tests/_bin/" + test_name + ".o"
     bin_path = "tests/_bin/" + test_name + ".out"
+
+    # TODO: check that each of these pass before running the next
+    # command
     subprocess.run(["cargo", "run", input_path], stdout=asm_file)
     subprocess.run(["nasm", "-f", "elf64", asm_path])
     subprocess.run(["gcc", "-o", bin_path, "runtime.c", object_path])
@@ -56,6 +59,7 @@ def run_all_tests(delete_generated_files=True):
     num_tests = len(test_names)
     failures = 0
     for test in test_names:
+        print("Running %s" % test)
         failures += run_test(test)
 
     print("\n\n Ran %d tests. %d tests failed." % (num_tests, failures))
@@ -66,5 +70,8 @@ def run_all_tests(delete_generated_files=True):
 
 
 if __name__ == '__main__':
-    os.mkdir("tests/_bin")
-    run_all_tests()        
+    try:
+        os.mkdir("tests/_bin")
+    except FileExistsError:
+        pass
+    run_all_tests()
