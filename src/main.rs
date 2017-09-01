@@ -567,7 +567,7 @@ fn ensure_tuple(a: X86Arg) -> Vec<X86> {
          X86::Mov(X86Arg::Reg(Reg::RCX), a),
          X86::And(X86Arg::Reg(Reg::RCX), X86Arg::Imm(2)),
          X86::Cmp(X86Arg::Reg(Reg::RCX), X86Arg::Imm(0)),
-         X86::Jne(String::from("internal_error_non_bool")),
+         X86::Jne(String::from("internal_error_non_tuple")),
 
          X86::Pop(Reg::RCX)]
 }
@@ -1090,7 +1090,8 @@ fn assign_homes_to_op2(locs: &HashMap<String, X86Arg>,
         (X86Arg::RegOffset(_, _), X86Arg::Imm(_)) |
         (X86Arg::GlobalVal(_), X86Arg::Imm(_)) |
         (X86Arg::Imm(_), X86Arg::Imm(_)) |
-        (X86Arg::Reg(_), _) =>
+        (X86Arg::Reg(_), _) |
+        (X86Arg::RegOffset(_, _), X86Arg::GlobalVal(_))=>
             (dest, src),
         _ => panic!("unreachable: {:?}", (dest, src)),
     }
@@ -1295,9 +1296,9 @@ fn patch_single_instr(instr: X86) -> Vec<X86> {
                           X86Arg::Reg(Reg::RAX))]
         },
         X86::Mov(X86Arg::RegOffset(dest_reg, dest),
-                 X86Arg::GlobalVal(g)) => {
+                 X86Arg::FuncName(f)) => {
             vec![X86::Mov(X86Arg::Reg(Reg::RAX),
-                          X86Arg::GlobalVal(g)),
+                          X86Arg::FuncName(f)),
                  X86::Mov(X86Arg::RegOffset(dest_reg, dest),
                           X86Arg::Reg(Reg::RAX))]
         },
@@ -1398,7 +1399,7 @@ fn print_x86_arg(arg: X86Arg) -> String {
                         offset)
             }
         },
-        // X86Arg::FuncName(f) => format!("{}", f),
+        X86Arg::FuncName(f) => format!("{}", f),
         X86Arg::GlobalVal(g) => format!("QWORD [rel {}]", g),
         _ => panic!("invalid arg type: {:?}", arg),
     }
@@ -1474,16 +1475,14 @@ fn print_x86(prog: X86) -> String {
             let prelude = format!("{}:
     push rbp
     mov rbp, rsp
-{}
-    sub rsp, {}\n", name, save_callee_save_regs, stack_size);
+    sub rsp, {}
+{}\n", name, stack_size, save_callee_save_regs);
             let postlude = format!("    mov rdi, rax
-    add rsp, {}
 {}
+    add rsp, {}
     mov rsp, rbp
     pop rbp
-    ret\n", stack_size,
-                                   restore_callee_save_regs
-            );
+    ret\n", restore_callee_save_regs, stack_size,);
 
             let mut instrs_str = String::from(prelude);
             for i in instrs {
@@ -1512,13 +1511,13 @@ global main
 main:
     push rbp
     mov rbp, rsp
-{}
     sub rsp, {}
-    call initialize\n", save_callee_save_regs, stack_size);
+{}
+    call initialize\n", stack_size, save_callee_save_regs);
             let postlude = format!("    mov rdi, rax
     call print
-    add rsp, {}
 {}
+    add rsp, {}
     mov rsp, rbp
     pop rbp
     ret
@@ -1528,7 +1527,7 @@ internal_error_non_bool:
     call error_not_bool
 internal_error_non_tuple:
     call error_not_tuple
-\n", stack_size, restore_callee_save_regs);
+\n", restore_callee_save_regs, stack_size);
             let mut instrs_str = String::from(prelude);
             for i in instrs {
                 instrs_str.push_str(&print_instr(i));
