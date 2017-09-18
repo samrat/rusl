@@ -3,6 +3,7 @@ import subprocess
 import re
 import shutil
 import os
+import sys
 
 """
 USAGE: python run_tests.py
@@ -67,6 +68,9 @@ def run_all_tests(delete_generated_files=True):
     # Delete generated files
     if delete_generated_files:
         shutil.rmtree("tests/_bin")
+
+    if failures > 0:
+        sys.exit(1)
 
 
 if __name__ == '__main__':
