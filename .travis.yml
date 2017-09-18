@@ -1,7 +1,5 @@
 language: rust
 rust:
-  - stable
-  - beta
   - nightly
 
 addons:
@@ -10,5 +8,6 @@ addons:
       - deadsnakes
     packages:
       - python3.5
+      - nasm
       
 script: python3.5 run_tests.py
