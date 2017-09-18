@@ -1,5 +1,7 @@
 # rusl
 
+[![Build Status](https://travis-ci.org/samrat/rusl.svg?branch=master)](https://travis-ci.org/samrat/rusl)
+
 A minimal Lisp that compiles to x86-64.
 
 ```scheme
