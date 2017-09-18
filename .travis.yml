@@ -4,4 +4,10 @@ rust:
   - stable
   - beta
   - nightly
-script: python run_tests.py
+
+addons:
+  apt:
+    packages:
+      - python3
+      
+script: python3 run_tests.py
