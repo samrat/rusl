@@ -42,7 +42,7 @@ def run_test(test_name):
     # command
     subprocess.run(["cargo", "run", input_path], stdout=asm_file)
     subprocess.run(["nasm", "-f", "elf64", asm_path])
-    subprocess.run(["gcc", "-o", bin_path, "runtime.c", object_path])
+    subprocess.run(["gcc", "-std=c99", "-o", bin_path, "runtime.c", object_path])
 
     bin_run = subprocess.run(bin_path, stdout=subprocess.PIPE)
 
