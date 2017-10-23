@@ -33,6 +33,30 @@ gcc -g runtime.o test.o
 ./a.out
 ```
 
+## Compiler organization
+
+The compiler is organized as a series of passes. Each pass is a
+function.
+
+Compiler pipeline for a single function:
+
+A string is parsed into an SExpr(`parser::read`). The variables in
+the SExpr is then uniquified(`uniquify`). Then, lambdas are
+de-sugared into tuples(`convert_to_closures`). We then convert
+SExpr into Flat-- the difference being that subexpressions are
+lifted up into let-bindings. We then convert to a form we will
+call pseudo-X86; this is a three-address code but uses variables
+and supports if-conditionals so isn't quite X86. `uncover-live`
+performs liveness analysis, and `assign_homes` does
+register-allocation with spilling to stack where appropriate(we
+use linear-scan register allocation).
+
+Next, we lower if-conditionals to jumps(`lower_conditionals`). We
+are very close to a representation of X86 now, but there will be
+some instructions which are not valid X86 such as `mov [rbp-16],
+[rbp-32]`. `patch_instructions` will fix those up by using a
+register as an intermediate buffer.
+
 ## Data representation in memory
 
 - If LSB == 0 => ```integer```
