@@ -1542,16 +1542,22 @@ internal_error_non_tuple:
     return instrs_str;
 }
 
+fn read_input(filename: &str, mut input_buffer: &mut String)
+              -> io::Result<()> {
+    let mut f = try!(File::open(filename));
+    try!(f.read_to_string(&mut input_buffer));
+    Ok(())
+}
 
-fn read_input() -> io::Result<()> {
+fn main() {
     let args : Vec<_> = env::args().collect();
     if args.len() < 2 {
         panic!("usage: {} filename", args[0].clone());
     }
 
-    let mut f = try!(File::open(args[1].clone()));
     let mut input = String::new();
-    try!(f.read_to_string(&mut input));
+
+    let _ = read_input(&args[1], &mut input);
 
     let mut lexer = LexerState {
         s: input,
@@ -1590,10 +1596,4 @@ fn read_input() -> io::Result<()> {
     // println!("{:?}", patched);
 
     println!("{}", print_x86(patched));
-
-    Ok(())
-}
-
-fn main() {
-    let _ = read_input();
 }
