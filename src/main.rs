@@ -1,4 +1,4 @@
-#![feature(advanced_slice_patterns, slice_patterns)]
+#![feature(slice_patterns)]
 #![feature(box_syntax, box_patterns)]
 
 use std::io;
