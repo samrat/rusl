@@ -32,6 +32,13 @@ impl<'input> Lexer<'input> {
                 tok_buf: None}
     }
 
+    pub fn unread(&mut self, tok: Token<'input>) {
+        match self.tok_buf {
+            Some(_) => panic!("error: unread buffer full"),
+            None => self.tok_buf = Some(tok),
+        }
+    }
+
     pub fn get_token(&mut self) -> Token<'input> {
         if let Some(tok) = self.tok_buf.clone() {
             self.tok_buf = None;
@@ -127,4 +134,91 @@ impl<'input> Iterator for Lexer<'input> {
             t => Some(t),
         }
     }
+}
+
+fn main() {
+    #[derive(Debug)]
+    pub enum Ast<'input> {
+        Symbol(&'input str),
+        Number(i64),
+        Bool(bool),
+        List(Vec<Ast<'input>>),
+        FuncName(&'input str),  // for closure-conversion
+
+        Define(&'input str, Vec<&'input str>, Box<Ast<'input>>),
+    }
+
+    pub struct Parser<'input> {
+        lexer: Lexer<'input>
+    }
+
+    impl<'input> Parser<'input> {
+        pub fn new(source: &'input str) -> Parser<'input> {
+            Parser {
+                lexer: Lexer::new(source)
+            }
+        }
+
+        pub fn get_list(&mut self) -> Vec<Ast<'input>> {
+            match self.get_expr() {
+                Some(expr) => match self.lexer.next() {
+                    None => vec![],
+                    Some(Token::RParen) => vec![expr],
+                    Some(tok) => {
+                        self.lexer.unread(tok);
+                        let mut seq = self.get_list();
+                        seq.insert(0, expr);
+                        
+                        return seq;
+                    }
+                },
+                None => vec![],
+            }
+        }
+
+        pub fn get_expr(&mut self) -> Option<Ast<'input>> {
+            match self.lexer.next() {
+                Some(Token::Symbol(s)) => Some(Ast::Symbol(s)),
+                Some(Token::Number(n)) => Some(Ast::Number(n)),
+                Some(Token::LParen) => Some(Ast::List(self.get_list())),
+                Some(Token::RParen) => panic!("line {}: {} unmatched ')'",
+                                              self.lexer.line_num,
+                                              self.lexer.col),
+                _ => None,
+            }
+        }
+
+        pub fn get_ast(expr: &Ast<'input>) -> Ast<'input> {
+            match expr {
+                &Ast::Symbol(sym) =>
+                    match &sym[..] {
+                        "#f" => Ast::Bool(false),
+                        "#t" => Ast::Bool(true),
+                        _ => Ast::Symbol(sym)
+                    },
+                &Ast::List(ref elts) =>
+                    match &elts[..] {
+                        &[Ast::Symbol(k), Ast::List(ref defelts), ref body]
+                            if k == "define" => {
+                                let name = &defelts[0];
+                                let args = &defelts[1..];
+
+                                if let Ast::Symbol(name) = name {
+                                    Ast::Define(name,
+                                                vec![],
+                                                Box::new(Parser::get_ast(&body)))
+                                } else {
+                                    panic!("invalid function prototype");
+                                }
+                            },
+                        _ => Ast::Number(42),
+                    },
+                _ => Ast::Number(42),
+            }
+        }
+    }
+
+    let mut p = Parser::new("(define (foo x y) (+ (* 1 2) 2))");
+    // println!("{:?}", p.get_expr());
+    println!("{:?}", Parser::get_ast(&p.get_expr().unwrap()));
 }
