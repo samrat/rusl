@@ -1,213 +1,215 @@
-use std::process;
+#![feature(slice_patterns)]
+mod lexer;
+use lexer::{Token, Lexer};
 
-use lexer::Token;
-use lexer::LexerState;
-use lexer::get_token;
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum CC {
     // condition codes
     E, L, LE, G, GE,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
-pub enum SExpr {
-    Symbol(String),
+#[derive(Debug, Clone)]
+pub enum Ast<'input> {
+    Symbol(&'input str),
     Number(i64),
     Bool(bool),
-    List(Vec<SExpr>),
-    FuncName(String),           // for closure-conversion
+    List(Vec<Ast<'input>>),
+    FuncName(&'input str),  // for closure-conversion
 
-    Define(String, Vec<String>, Box<SExpr>),
-    Let(Vec<(String, SExpr)>, Box<SExpr>),
-    Lambda(Vec<String>, Box<SExpr>),
-    If(Box<SExpr>, Box<SExpr>, Box<SExpr>),
-    Tuple(Vec<SExpr>),
-    Cmp(CC, Box<SExpr>, Box<SExpr>),
-    App(Box<SExpr>, Vec<SExpr>),
-    Prog(Vec<SExpr>, Box<SExpr>),
-    EOF,
+    Define(&'input str, Vec<&'input str>, Box<Ast<'input>>),
+    If(Box<Ast<'input>>,     // cnd
+       Box<Ast<'input>>,     // thn
+       Box<Ast<'input>>),    // els
+    Let(Vec<(&'input str, Ast<'input>)>, Box<Ast<'input>>),
+    Lambda(Vec<&'input str>, Box<Ast<'input>>),
+    Tuple(Vec<Ast<'input>>),
+    Cmp(CC, Box<Ast<'input>>, Box<Ast<'input>>),
+    App(Box<Ast<'input>>, Vec<Ast<'input>>)
 }
 
-
-fn unread(ls: &mut LexerState, tok: Token) {
-    if let Some(_) = ls.tok_buf {
-        println!("error: unread buffer full");
-    }
-    else {
-        ls.tok_buf = Some(tok)
-    }
+pub struct Parser<'input> {
+    lexer: Lexer<'input>
 }
 
-
-fn get_list(ls: &mut LexerState) -> Vec<SExpr> {
-    match get_expr(ls) {
-        exp => match get_token(ls) {
-            Token::RParen => return vec![exp],
-            tok => {
-                unread(ls, tok);
-                let mut seq = get_list(ls);
-                seq.insert(0, exp);
-                return seq;
-            },
-        },
-    }
-}
-
-pub fn get_expr(ls: &mut LexerState) -> SExpr {
-    match get_token(ls) {
-        Token::Symbol(s) => return SExpr::Symbol(s),
-        Token::Number(n) => return SExpr::Number(n),
-        Token::LParen => {
-            return SExpr::List(get_list(ls));
-        },
-        Token::RParen => panic!("line {}:{} unmatched ')'",
-                                ls.line_num, ls.col),
-        Token::EOF => return SExpr::EOF,
-    }
-}
-
-pub fn get_arg_names(args: &Vec<SExpr>) -> Vec<String> {
-    let mut arg_names = vec![];
-    for arg in args {
-        match arg {
-            &SExpr::Symbol(ref name) => arg_names.push(name.clone()),
-            _ => {
-                error!("arg should be a Symbol");
-                process::exit(0);
-            }
+impl<'input> Parser<'input> {
+    pub fn new(source: &'input str) -> Parser<'input> {
+        Parser {
+            lexer: Lexer::new(source)
         }
     }
 
-    return arg_names;
-}
+    pub fn get_list(&mut self) -> Vec<Ast<'input>> {
+        match self.get_expr() {
+            Some(expr) => match self.lexer.next() {
+                None => vec![],
+                Some(Token::RParen) => vec![expr],
+                Some(tok) => {
+                    self.lexer.unread(tok);
+                    let mut seq = self.get_list();
+                    seq.insert(0, expr);
 
-pub fn get_ast(expr: &SExpr) -> SExpr {
-    match expr {
-        &SExpr::Symbol(ref sym) => {
-            match &sym[..] {
-                "#f" => SExpr::Bool(false),
-                "#t" => SExpr::Bool(true),
-                _ => SExpr::Symbol(sym.clone()),
-            }
-        },
-        &SExpr::List(ref elts) =>
-            match &elts[..] {
-                &[SExpr::Symbol(ref k), SExpr::List(ref defelts), ref body]
-                    if k == "define" => {
-                    let ref name = defelts[0];
-                    let args = defelts[1..].to_vec();
+                    return seq;
+                }
+            },
+            None => vec![],
+        }
+    }
 
-                    match name {
-                        &SExpr::Symbol(ref name) => {
-                            return SExpr::Define(name.clone(), get_arg_names(&args.to_vec()),
-                                                 Box::new(get_ast(body)));
+    pub fn get_expr(&mut self) -> Option<Ast<'input>> {
+        match self.lexer.next() {
+            Some(Token::Symbol(s)) => Some(Ast::Symbol(s)),
+            Some(Token::Number(n)) => Some(Ast::Number(n)),
+            Some(Token::LParen) => Some(Ast::List(self.get_list())),
+            Some(Token::RParen) => panic!("line {}: {} unmatched ')'",
+                                          self.lexer.line_num,
+                                          self.lexer.col),
+            _ => None,
+        }
+    }
+
+    pub fn get_arg_names(args: &[Ast<'input>]) -> Vec<&'input str> {
+        let arg_names : Vec<&'input str> = args.iter().map(|arg| match arg {
+            Ast::Symbol(name) => *name,
+            _ => panic!("invalid arg"),
+        }).collect();
+
+        arg_names
+    }
+
+    pub fn get_ast(expr: &Ast<'input>) -> Ast<'input> {
+        match expr {
+            &Ast::Symbol(sym) =>
+                match &sym[..] {
+                    "#f" => Ast::Bool(false),
+                    "#t" => Ast::Bool(true),
+                    _ => Ast::Symbol(sym)
+                },
+            &Ast::List(ref elts) =>
+                match &elts[..] {
+                    &[Ast::Symbol(k), Ast::List(ref defelts), ref body]
+                        if k == "define" => {
+                            let name = &defelts[0];
+                            let args = &defelts[1..];
+
+                            if let Ast::Symbol(name) = name {
+                                Ast::Define(name,
+                                            Parser::get_arg_names(args),
+                                            Box::new(Parser::get_ast(&body)))
+                            } else {
+                                panic!("invalid function prototype");
+                            }
                         },
-                        _ => panic!("invalid function prototype"),
-                    }
-                },
-                &[SExpr::Symbol(ref k), ref cnd, ref thn, ref els]
-                    if k == "if" => {
-                    return SExpr::If(Box::new(get_ast(cnd)),
-                                     Box::new(get_ast(thn)),
-                                     Box::new(get_ast(els)));
-                    },
-                &[SExpr::Symbol(ref k), SExpr::List(ref bindings), ref body]
-                    if k == "let" => {
-                        let mut astified_bindings = vec![];
-                        for bind_pair in bindings {
-                            let (key, val) = match bind_pair {
-                                // TODO: check length
-                                &SExpr::List(ref kv) => (kv[0].clone(), kv[1].clone()),
-                                _ => panic!("non-list in let-binding"),
+                    &[Ast::Symbol(k), ref cnd, ref thn, ref els]
+                        if k == "if" => {
+                            Ast::If(Box::new(Parser::get_ast(cnd)),
+                                    Box::new(Parser::get_ast(thn)),
+                                    Box::new(Parser::get_ast(els)))
+                        },
+                    &[Ast::Symbol(k), Ast::List(ref bindings), ref body]
+                        if k == "let" => {
+                            let mut astified_bindings = vec![];
+                            for bind_pair in bindings {
+                                if let Ast::List(kv) = bind_pair {
+                                    let (key, val) =
+                                        if kv.len() == 2 {
+                                            let astified_val = Parser::get_ast(&kv[1]);
+                                            let keyname =
+                                                if let Ast::Symbol(k) = kv[0] {
+                                                    k
+                                                } else {
+                                                    panic!("let binding key is not symbol");
+                                                };
+                                            (keyname, astified_val)
+                                        } else {
+                                            panic!("invalid let binding syntax");
+                                        };
+
+                                    astified_bindings.push((key, val));
+                                }
+                            }
+
+                            Ast::Let(astified_bindings,
+                                     Box::new(Parser::get_ast(&body)))
+                        },
+                    &[Ast::Symbol(k), Ast::List(ref args), ref body]
+                        if k == "lambda" => {
+                            Ast::Lambda(Parser::get_arg_names(args),
+                                        Box::new(Parser::get_ast(body)))
+                        },
+                    &[Ast::Symbol(k), _..]
+                        if k == "tuple" => {
+                            let tuple_elts = elts[1..].iter()
+                                .map(|e| Parser::get_ast(e))
+                                .collect();
+                            Ast::Tuple(tuple_elts)
+                        },
+                    &[Ast::Symbol(cmp), ref left, ref right]
+                        if (cmp == ">" || cmp == "<" ||
+                            cmp == "<=" || cmp == ">=" ||
+                            cmp == "=") => {
+                            let cc = match &cmp[..] {
+                                ">" => CC::G,
+                                "<" => CC::L,
+                                ">=" => CC::GE,
+                                "<=" => CC::LE,
+                                "=" => CC::E,
+                                &_ => panic!("invalid cmp op"),
                             };
 
-                            let keyname = match key {
-                                SExpr::Symbol(k) => k,
-                                _ => panic!("let binding key is not symbol"),
-                            };
-                            astified_bindings.push((keyname, get_ast(&val)));
-                        }
-                        return SExpr::Let(astified_bindings, Box::new(get_ast(&body)));
-                    },
-                &[SExpr::Symbol(ref k), SExpr::List(ref args), ref body]
-                    if k == "lambda" => {
-                        return SExpr::Lambda(get_arg_names(&args.to_vec()),
-                                             box get_ast(body));
-                    },
-                &[SExpr::Symbol(ref k), _..]
-                    if k == "tuple" => {
-                        let mut tuple_elts = elts[1..].to_vec();
-                        tuple_elts = tuple_elts.iter().map(|e| get_ast(e)).collect();
-                        return SExpr::Tuple(tuple_elts);
-                    },
-                &[SExpr::Symbol(ref cmp), ref left, ref right]
-                    if (cmp == ">" || cmp == "<" ||
-                        cmp == "<=" || cmp == ">=" ||
-                        cmp == "=") => {
-                        let cc = match &cmp[..] {
-                            ">" => CC::G,
-                            "<" => CC::L,
-                            ">=" => CC::GE,
-                            "<=" => CC::LE,
-                            "=" => CC::E,
-                            &_ => panic!("NYI"),
-                        };
+                            Ast::Cmp(cc,
+                                     Box::new(Parser::get_ast(left)),
+                                     Box::new(Parser::get_ast(right)))
+                        },
+                    &[ref f, _..] => {
+                        let args = elts[1..].iter().map(|e| Parser::get_ast(e))
+                            .collect();
 
-                        return SExpr::Cmp(cc,
-                                          box get_ast(left),
-                                          box get_ast(right));
-                    },
-                &[ref f, _..] => {
-                    let mut astified_args = vec![];
-                    for arg in elts[1..].to_vec() {
-                        astified_args.push(get_ast(&arg));
+                        Ast::App(Box::new(f.clone()), args)
                     }
-
-                    return SExpr::App(Box::new(f.clone()), astified_args);
+                    _ => Ast::Number(42),
                 },
-                &_ => panic!("NYI: {:?}", elts),
-            }
-        ,
-        &_ => expr.clone(),
+            _ => expr.clone(),
+        }
+    }
+
+    pub fn read(&mut self) -> Option<Ast<'input>> {
+        match self.get_expr() {
+            Some(expr) => Some(Parser::get_ast(&expr)),
+            None => None,
+        }
     }
 }
 
-pub fn read(ls: &mut LexerState) -> SExpr {
-    return get_ast(&get_expr(ls));
+impl<'input> Iterator for Parser<'input> {
+    type Item = Ast<'input>;
+
+    fn next(&mut self) -> Option<Ast<'input>> {
+        self.read()
+    }
 }
 
-#[test]
-fn test_parser() {
-    let input = String::from("(if #f (+ 42 (foo 12)) 17)
-                                  (define (foo x y z) (+ x 10))
-                                  (+ 1 2)");
-    let mut lexer = LexerState {
-        s: input,
-        pos: 0,
-        col: 1,
-        line_num: 1,
-        tok_buf: None,
-    };
-    assert_eq!(SExpr::If(Box::new(SExpr::Bool(false)),
-                         Box::new(SExpr::App(Box::new(SExpr::Symbol("+".to_string())),
-                                             vec![SExpr::Number(42),
-                                                  SExpr::App(Box::new(SExpr::Symbol("foo".to_string())),
-                                                             vec![SExpr::Number(12)])])),
-                         Box::new(SExpr::Number(17))),
-               read(&mut lexer));
+fn main() {
+    let mut p = Parser::new("(if #t 42 (define (foo x y) (+ (* 1 2) 2)))");
+    println!("{:?}", Parser::get_ast(&p.get_expr().unwrap()));
 
-    // Second top-level s-expression
-    assert_eq!(SExpr::Define("foo".to_string(), vec!["x".to_string(), "y".to_string(), "z".to_string()],
-                             Box::new(SExpr::App(Box::new(SExpr::Symbol("+".to_string())),
-                                        vec![SExpr::Symbol("x".to_string()), SExpr::Number(10)]))),
-               read(&mut lexer));
+    let mut p2 = Parser::new("(let ((x 10) (y 2)) (+ x y))");
+    println!("{:?}", Parser::get_ast(&p2.get_expr().unwrap()));
 
-    // Third top-level s-expression
-    assert_eq!(SExpr::App(Box::new(SExpr::Symbol("+".to_string())),
-                          vec![SExpr::Number(1),
-                               SExpr::Number(2)]),
-               read(&mut lexer));
-    // nothing left in string
-    assert_eq!(SExpr::EOF, read(&mut lexer));
+    let mut p3 = Parser::new("(lambda (x y) (+ x y))");
+    println!("{:?}", Parser::get_ast(&p3.get_expr().unwrap()));
+
+    let mut p4 = Parser::new("(tuple 1 2 3)");
+    println!("{:?}", Parser::get_ast(&p4.get_expr().unwrap()));
+
+    let mut p5 = Parser::new("(> 1 2)");
+    println!("{:?}", Parser::get_ast(&p5.get_expr().unwrap()));
+
+    let mut p6 = Parser::new("(+ 1 2)");
+    println!("{:?}", Parser::get_ast(&p6.get_expr().unwrap()));
+
+
+    let mut ps = Parser::new("(> 1 2) (+ 1 2)");
+    for a in ps {
+        println!("{:?}", a);
+    }
 }
