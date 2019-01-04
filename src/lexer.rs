@@ -146,6 +146,10 @@ fn main() {
         FuncName(&'input str),  // for closure-conversion
 
         Define(&'input str, Vec<&'input str>, Box<Ast<'input>>),
+        If(Box<Ast<'input>>,     // cnd
+           Box<Ast<'input>>,     // thn
+           Box<Ast<'input>>),    // els
+        Let(Vec<(&'input str, Ast<'input>)>, Box<Ast<'input>>),
     }
 
     pub struct Parser<'input> {
@@ -211,6 +215,38 @@ fn main() {
                                     panic!("invalid function prototype");
                                 }
                             },
+                        &[Ast::Symbol(k), ref cnd, ref thn, ref els]
+                            if k == "if" => {
+                                Ast::If(Box::new(Parser::get_ast(cnd)),
+                                        Box::new(Parser::get_ast(thn)),
+                                        Box::new(Parser::get_ast(els)))
+                            },
+                        &[Ast::Symbol(k), Ast::List(ref bindings), ref body]
+                            if k == "let" => {
+                                let mut astified_bindings = vec![];
+                                for bind_pair in bindings {
+                                    if let Ast::List(kv) = bind_pair {
+                                        let (key, val) =
+                                            if kv.len() == 2 {
+                                                (kv[0], kv[1])
+                                            } else {
+                                                panic!("invalid let binding syntax");
+                                            };
+
+                                        let keyname =
+                                            if let Ast::Symbol(k) = key {
+                                                k
+                                            } else {
+                                                panic!("let binding key is not symbol");
+                                            };
+
+                                        astified_bindings.push((keyname, Parser::get_ast(&val)));
+                                    }
+                                }
+
+                                Ast::Let(astified_bindings,
+                                         Box::new(Parser::get_ast(&body)))
+                            },
                         _ => Ast::Number(42),
                     },
                 _ => Ast::Number(42),
@@ -218,7 +254,7 @@ fn main() {
         }
     }
 
-    let mut p = Parser::new("(define (foo x y) (+ (* 1 2) 2))");
+    let mut p = Parser::new("(if #t 42 (define (foo x y) (+ (* 1 2) 2)))");
     // println!("{:?}", p.get_expr());
     println!("{:?}", Parser::get_ast(&p.get_expr().unwrap()));
 }
