@@ -1,3 +1,5 @@
+#![feature(slice_patterns)]
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum Token<'input> {
     LParen,
@@ -137,7 +139,13 @@ impl<'input> Iterator for Lexer<'input> {
 }
 
 fn main() {
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
+    pub enum CC {
+        // condition codes
+        E, L, LE, G, GE,
+    }
+
+    #[derive(Debug, Clone)]
     pub enum Ast<'input> {
         Symbol(&'input str),
         Number(i64),
@@ -150,6 +158,10 @@ fn main() {
            Box<Ast<'input>>,     // thn
            Box<Ast<'input>>),    // els
         Let(Vec<(&'input str, Ast<'input>)>, Box<Ast<'input>>),
+        Lambda(Vec<&'input str>, Box<Ast<'input>>),
+        Tuple(Vec<Ast<'input>>),
+        Cmp(CC, Box<Ast<'input>>, Box<Ast<'input>>),
+        App(Box<Ast<'input>>, Vec<Ast<'input>>)
     }
 
     pub struct Parser<'input> {
@@ -172,7 +184,7 @@ fn main() {
                         self.lexer.unread(tok);
                         let mut seq = self.get_list();
                         seq.insert(0, expr);
-                        
+
                         return seq;
                     }
                 },
@@ -256,17 +268,86 @@ fn main() {
                                 Ast::Let(astified_bindings,
                                          Box::new(Parser::get_ast(&body)))
                             },
+                        &[Ast::Symbol(k), Ast::List(ref args), ref body]
+                            if k == "lambda" => {
+                                Ast::Lambda(Parser::get_arg_names(args),
+                                            Box::new(Parser::get_ast(body)))
+                            },
+                        &[Ast::Symbol(k), _..]
+                            if k == "tuple" => {
+                                let tuple_elts = elts[1..].iter()
+                                    .map(|e| Parser::get_ast(e))
+                                    .collect();
+                                Ast::Tuple(tuple_elts)
+                            },
+                        &[Ast::Symbol(cmp), ref left, ref right]
+                            if (cmp == ">" || cmp == "<" ||
+                                cmp == "<=" || cmp == ">=" ||
+                                cmp == "=") => {
+                                let cc = match &cmp[..] {
+                                    ">" => CC::G,
+                                    "<" => CC::L,
+                                    ">=" => CC::GE,
+                                    "<=" => CC::LE,
+                                    "=" => CC::E,
+                                    &_ => panic!("invalid cmp op"),
+                                };
+
+                                Ast::Cmp(cc,
+                                         Box::new(Parser::get_ast(left)),
+                                         Box::new(Parser::get_ast(right)))
+                            },
+                        &[ref f, _..] => {
+                            let args = elts[1..].iter().map(|e| Parser::get_ast(e))
+                                .collect();
+
+                            Ast::App(Box::new(f.clone()), args)
+                        }
                         _ => Ast::Number(42),
                     },
-                _ => Ast::Number(42),
+                _ => expr.clone(),
+            }
+        }
+
+        pub fn read(&mut self) -> Option<Ast<'input>> {
+            match self.get_expr() {
+                Some(expr) => Some(Parser::get_ast(&expr)),
+                None => None,
             }
         }
     }
 
-    let mut p = Parser::new("(if #t 42 (define (foo x y) (+ (* 1 2) 2)))");
-    let mut p2 = Parser::new("(let ((x 10) (y 2)) (+ x y))");
+    impl<'input> Iterator for Parser<'input> {
+        type Item = Ast<'input>;
 
-    // println!("{:?}", p.get_expr());
+        fn next(&mut self) -> Option<Ast<'input>> {
+            self.read()
+        }
+    }
+
+
+    let mut p = Parser::new("(if #t 42 (define (foo x y) (+ (* 1 2) 2)))");
     println!("{:?}", Parser::get_ast(&p.get_expr().unwrap()));
+
+    let mut p2 = Parser::new("(let ((x 10) (y 2)) (+ x y))");
     println!("{:?}", Parser::get_ast(&p2.get_expr().unwrap()));
+
+    let mut p3 = Parser::new("(lambda (x y) (+ x y))");
+    println!("{:?}", Parser::get_ast(&p3.get_expr().unwrap()));
+
+    let mut p4 = Parser::new("(tuple 1 2 3)");
+    println!("{:?}", Parser::get_ast(&p4.get_expr().unwrap()));
+
+    let mut p5 = Parser::new("(> 1 2)");
+    println!("{:?}", Parser::get_ast(&p5.get_expr().unwrap()));
+
+    let mut p6 = Parser::new("(+ 1 2)");
+    println!("{:?}", Parser::get_ast(&p6.get_expr().unwrap()));
+
+
+    let mut ps = Parser::new("(> 1 2) (+ 1 2)");
+    for a in ps {
+        println!("{:?}", a);
+    }
+    // println!("{:?}", p.get_expr());
 }
