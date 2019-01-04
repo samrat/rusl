@@ -192,6 +192,15 @@ fn main() {
             }
         }
 
+        pub fn get_arg_names(args: &[Ast<'input>]) -> Vec<&'input str> {
+            let arg_names : Vec<&'input str> = args.iter().map(|arg| match arg {
+                Ast::Symbol(name) => *name,
+                _ => panic!("invalid arg"),
+            }).collect();
+
+            arg_names
+        }
+
         pub fn get_ast(expr: &Ast<'input>) -> Ast<'input> {
             match expr {
                 &Ast::Symbol(sym) =>
@@ -209,7 +218,7 @@ fn main() {
 
                                 if let Ast::Symbol(name) = name {
                                     Ast::Define(name,
-                                                vec![],
+                                                Parser::get_arg_names(args),
                                                 Box::new(Parser::get_ast(&body)))
                                 } else {
                                     panic!("invalid function prototype");
@@ -228,19 +237,19 @@ fn main() {
                                     if let Ast::List(kv) = bind_pair {
                                         let (key, val) =
                                             if kv.len() == 2 {
-                                                (kv[0], kv[1])
+                                                let astified_val = Parser::get_ast(&kv[1]);
+                                                let keyname =
+                                                    if let Ast::Symbol(k) = kv[0] {
+                                                        k
+                                                    } else {
+                                                        panic!("let binding key is not symbol");
+                                                    };
+                                                (keyname, astified_val)
                                             } else {
                                                 panic!("invalid let binding syntax");
                                             };
 
-                                        let keyname =
-                                            if let Ast::Symbol(k) = key {
-                                                k
-                                            } else {
-                                                panic!("let binding key is not symbol");
-                                            };
-
-                                        astified_bindings.push((keyname, Parser::get_ast(&val)));
+                                        astified_bindings.push((key, val));
                                     }
                                 }
 
@@ -255,6 +264,9 @@ fn main() {
     }
 
     let mut p = Parser::new("(if #t 42 (define (foo x y) (+ (* 1 2) 2)))");
+    let mut p2 = Parser::new("(let ((x 10) (y 2)) (+ x y))");
+
     // println!("{:?}", p.get_expr());
     println!("{:?}", Parser::get_ast(&p.get_expr().unwrap()));
+    println!("{:?}", Parser::get_ast(&p2.get_expr().unwrap()));
 }
