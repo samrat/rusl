@@ -1,8 +1,9 @@
 #![feature(bind_by_move_pattern_guards)]
-// mod lexer;
+
 use lexer::{Token, Lexer};
 
 use std::collections::HashMap;
+use std::rc::Rc;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum CC {
@@ -12,18 +13,18 @@ pub enum CC {
 
 #[derive(Debug, Clone)]
 pub enum Ast {
-    Symbol(String),
+    Symbol(Rc<String>),
     Number(i64),
     Bool(bool),
     List(Vec<Ast>),
-    FuncName(String),  // for closure-conversion
+    FuncName(Rc<String>),  // for closure-conversion
 
-    Define(String, Vec<String>, Box<Ast>),
+    Define(Rc<String>, Vec<Rc<String>>, Box<Ast>),
     If(Box<Ast>,     // cnd
        Box<Ast>,     // thn
        Box<Ast>),    // els
-    Let(Vec<(String, Ast)>, Box<Ast>),
-    Lambda(Vec<String>, Box<Ast>),
+    Let(Vec<(Rc<String>, Ast)>, Box<Ast>),
+    Lambda(Vec<Rc<String>>, Box<Ast>),
     Tuple(Vec<Ast>),
     Cmp(CC, Box<Ast>, Box<Ast>),
     App(Box<Ast>, Vec<Ast>),
@@ -39,13 +40,13 @@ pub fn get_unique_varname(stem: &str) -> String {
     }
 }
 
-
 impl Ast {
-    pub fn uniquify(&self, mapping: &mut HashMap<String, String>) -> Self {
+    pub fn uniquify(&self, mapping: &mut HashMap<Rc<String>, Rc<String>>) -> Self {
         match self {
             Ast::Symbol(name) => {
-                let uniq_name = mapping.get(&name[..]).expect("unbound symbol");
-                Ast::Symbol(uniq_name.to_string())
+                let uniq_name = mapping.get(name)
+                    .expect("unbound symbol");
+                Ast::Symbol(uniq_name.clone())
             },
             Ast::Number(_) | Ast::Bool(_) => self.clone(),
             Ast::Tuple(elts) => {
@@ -56,10 +57,11 @@ impl Ast {
             Ast::Let(bindings, body) => {
                 let mut new_bindings = vec![];
                 for (k, v) in bindings {
-                    let uniq_k = get_unique_varname(&k).to_string();
-                    mapping.insert(k.to_string(), uniq_k.clone());
-                    new_bindings.push((uniq_k,
+                    let uniq_k = Rc::new(get_unique_varname(&k));
+                    new_bindings.push((uniq_k.clone(),
                                        v.uniquify(mapping)));
+                    mapping.insert(k.clone(), uniq_k.clone());
+
                 }
                 Ast::Let(new_bindings,
                          Box::new(body.uniquify(mapping)))
@@ -75,26 +77,26 @@ impl Ast {
             Ast::Lambda(args, body) => {
                 let mut new_args = vec![];
                 for arg in args {
-                    let new_arg = get_unique_varname(&arg);
+                    let new_arg = Rc::new(get_unique_varname(arg));
                     new_args.push(new_arg.clone());
-                    mapping.insert(arg.to_string(), new_arg);
+                    mapping.insert(arg.clone(), new_arg.clone());
                 }
 
                  Ast::Lambda(new_args,
                              box body.uniquify(mapping))
             },
             Ast::Define(name, args, val) => {
-                let uniq_fname = get_unique_varname(&name);
-                mapping.insert(name.to_string(), uniq_fname.clone());
+                let uniq_fname = Rc::new(get_unique_varname(name));
+                mapping.insert(name.clone(), uniq_fname.clone());
 
                 let mut new_args = vec![];
                 for arg in args {
-                    let new_arg = get_unique_varname(&arg);
+                    let new_arg = Rc::new(get_unique_varname(arg));
                     new_args.push(new_arg.clone());
-                    mapping.insert(arg.to_string(), new_arg);
+                    mapping.insert(arg.clone(), new_arg.clone());
                 }
 
-                Ast::Define(uniq_fname,
+                Ast::Define(uniq_fname.clone(),
                             new_args,
                             box val.uniquify(mapping))
             },
@@ -148,7 +150,7 @@ impl<'input> Parser<'input> {
 
     pub fn get_expr(&mut self) -> Option<Ast> {
         match self.lexer.next() {
-            Some(Token::Symbol(s)) => Some(Ast::Symbol(s.to_string())),
+            Some(Token::Symbol(s)) => Some(Ast::Symbol(Rc::new(s.to_string()))),
             Some(Token::Number(n)) => Some(Ast::Number(n)),
             Some(Token::LParen) => Some(Ast::List(self.get_list())),
             Some(Token::RParen) => panic!("line {}: {} unmatched ')'",
@@ -158,10 +160,10 @@ impl<'input> Parser<'input> {
         }
     }
 
-    pub fn get_arg_names(args: &[Ast]) -> Vec<String> {
-        let arg_names : Vec<String> =
+    pub fn get_arg_names(args: &[Ast]) -> Vec<Rc<String>> {
+        let arg_names : Vec<Rc<String>> =
             args.iter().map(|arg| match arg {
-                Ast::Symbol(name) => name.to_string(),
+                Ast::Symbol(name) => name.clone(),
                 _ => panic!("invalid arg"),
             }).collect();
 
@@ -174,17 +176,17 @@ impl<'input> Parser<'input> {
                 match &sym[..] {
                     "#f" => Ast::Bool(false),
                     "#t" => Ast::Bool(true),
-                    _ => Ast::Symbol(sym.to_string())
+                    _ => Ast::Symbol(Rc::new(sym.to_string()))
                 },
             Ast::List(elts) =>
                 match &elts[..] {
                     [Ast::Symbol(k), Ast::List(defelts), body]
-                        if k == "define" => {
+                        if &k[..] == "define" => {
                             let name = &defelts[0];
                             let args = &defelts[1..];
 
                             if let Ast::Symbol(name) = name {
-                                Ast::Define(name.to_string(),
+                                Ast::Define(name.clone(),
                                             Parser::get_arg_names(args),
                                             Box::new(Parser::get_ast(body)))
                             } else {
@@ -192,13 +194,13 @@ impl<'input> Parser<'input> {
                             }
                         },
                     [Ast::Symbol(k), cnd, thn, els]
-                        if k == "if" => {
+                        if &k[..] == "if" => {
                             Ast::If(Box::new(Parser::get_ast(cnd)),
                                     Box::new(Parser::get_ast(thn)),
                                     Box::new(Parser::get_ast(els)))
                         },
                     [Ast::Symbol(k), Ast::List(bindings), body]
-                        if k == "let" => {
+                        if &k[..] == "let" => {
                             let mut astified_bindings = vec![];
                             for bind_pair in bindings {
                                 if let Ast::List(kv) = bind_pair {
@@ -224,12 +226,12 @@ impl<'input> Parser<'input> {
                                      Box::new(Parser::get_ast(body)))
                         },
                     [Ast::Symbol(k), Ast::List(args), body]
-                        if k == "lambda" => {
+                        if &k[..] == "lambda" => {
                             Ast::Lambda(Parser::get_arg_names(&args),
                                         Box::new(Parser::get_ast(body)))
                         },
                     [Ast::Symbol(k), _..]
-                        if k == "tuple" => {
+                        if &k[..] == "tuple" => {
                             let tuple_elts = elts[1..].iter()
                             // TODO: move?
                                 .map(|e| Parser::get_ast(e))
@@ -237,9 +239,9 @@ impl<'input> Parser<'input> {
                             Ast::Tuple(tuple_elts)
                         },
                     [Ast::Symbol(cmp), left, right]
-                        if (cmp == ">" || cmp == "<" ||
-                            cmp == "<=" || cmp == ">=" ||
-                            cmp == "=") => {
+                        if (&cmp[..] == ">" || &cmp[..] == "<" ||
+                            &cmp[..] == "<=" || &cmp[..] == ">=" ||
+                            &cmp[..] == "=") => {
                             let cc = match &cmp[..] {
                                 ">" => CC::G,
                                 "<" => CC::L,

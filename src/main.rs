@@ -8,6 +8,7 @@ use std::io::prelude::*;
 use std::fs::File;
 use std::env;
 use std::process;
+use std::rc::Rc;
 
 #[macro_use]
 extern crate log;
@@ -39,16 +40,15 @@ pub fn main() {
     let parser = Parser::new(&input);
     let toplevel : Vec<_> = parser.collect();
 
-    let mut uniquify_mapping : HashMap<String, String> = HashMap::new();
+    let mut uniquify_mapping : HashMap<Rc<String>, Rc<String>> = HashMap::new();
     for prim in ["+", "-", "tuple-ref", "tuple"].iter() {
-        uniquify_mapping.insert(prim.to_string(), prim.to_string());
+        uniquify_mapping.insert(Rc::new(prim.to_string()), Rc::new(prim.to_string()));
     }
 
     println!("{:?}",
              Ast::Prog(toplevel[..toplevel.len()-1].to_vec(),
                        Box::new(toplevel[toplevel.len()-1].clone()))
              .uniquify(&mut uniquify_mapping));
-
 
     println!("{:?}", toplevel);
 }
