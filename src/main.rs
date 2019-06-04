@@ -45,10 +45,18 @@ pub fn main() {
         uniquify_mapping.insert(Rc::new(prim.to_string()), Rc::new(prim.to_string()));
     }
 
-    println!("{:?}",
-             Ast::Prog(toplevel[..toplevel.len()-1].to_vec(),
+    let uniquified = Ast::Prog(toplevel[..toplevel.len()-1].to_vec(),
                        Box::new(toplevel[toplevel.len()-1].clone()))
-             .uniquify(&mut uniquify_mapping));
+             .uniquify(&mut uniquify_mapping);
+    println!("Uniquify: {:?}",
+             uniquified);
+
+    let (closures_converted, _) = uniquified
+        .convert_to_closures(&HashSet::new(),
+                             &HashSet::new());
+
+    println!("Closures converted {:?}",
+             closures_converted);
 
     println!("{:?}", toplevel);
 }
