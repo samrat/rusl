@@ -1,43 +1,44 @@
 use util::get_unique_varname;
-use parser::{SExpr, CC};
+use std::rc::Rc;
+use ast::{Ast, CC};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Flat {
-    Symbol(String),
-    FuncName(String),           // for closure-conversion
+    Symbol(Rc<String>),
+    FuncName(Rc<String>),           // for closure-conversion
     Number(i64),
     Bool(bool),
     Tuple(Vec<Flat>),
-    Assign(String, Box<Flat>),
+    Assign(Rc<String>, Box<Flat>),
     Return(Box<Flat>),
     If(Box<Flat>, Vec<Flat>, Vec<Flat>),
     Cmp(CC, Box<Flat>, Box<Flat>),
-    App(String, Vec<Flat>),
-    Prim(String, Vec<Flat>),
+    App(Rc<String>, Vec<Flat>),
+    Prim(Rc<String>, Vec<Flat>),
 }
 
 #[derive(Debug, PartialEq)]
 pub enum FlatResult {
-    Prog(Vec<FlatResult>, Vec<Flat>, Vec<String>),
-    Define(String, Vec<String>, Vec<Flat>, Vec<String>),
-    Flat(Flat, Vec<Flat>, Vec<String>),
+    Prog(Vec<FlatResult>, Vec<Flat>, Vec<Rc<String>>),
+    Define(Rc<String>, Vec<Rc<String>>, Vec<Flat>, Vec<Rc<String>>),
+    Flat(Flat, Vec<Flat>, Vec<Rc<String>>),
 }
 
-fn flatten_args(args: &Vec<SExpr>)
-                -> (Vec<Flat>, Vec<Flat>, Vec<String>) {
+fn flatten_args(args: &[Ast])
+                -> (Vec<Flat>, Vec<Flat>, Vec<Rc<String>>) {
     let mut flat_args = vec![];
     let mut args_assigns : Vec<Flat> = vec![];
     let mut args_vars = vec![];
 
     for arg in args {
-        let (flat_arg, arg_assigns, arg_vars) =
-            match flatten(arg.clone()) {
-                FlatResult::Flat(flat, assigns, vars) => (flat, assigns, vars),
-                _ => panic!("unreachable"),
-            };
-        flat_args.push(flat_arg);
-        args_assigns.extend_from_slice(&arg_assigns);
-        args_vars.extend_from_slice(&arg_vars);
+        match flatten(arg.clone()) {
+            FlatResult::Flat(flat, assigns, vars) => {
+                flat_args.push(flat);
+                args_assigns.extend_from_slice(&assigns);
+                args_vars.extend_from_slice(&vars);
+            },
+            _ => panic!("unreachable"),
+        };
     }
 
     return (flat_args, args_assigns, args_vars);
@@ -46,41 +47,40 @@ fn flatten_args(args: &Vec<SExpr>)
 
 // This function does and ANF transformation. The output is a Flat
 // expression.
-pub fn flatten(expr: SExpr) -> FlatResult {
+pub fn flatten(expr: Ast) -> FlatResult {
     match expr {
-        SExpr::Symbol(name) => FlatResult::Flat(Flat::Symbol(name.clone()),
+        Ast::Symbol(name) => FlatResult::Flat(Flat::Symbol(name.clone()),
                                                 vec![],
                                                 vec![name]),
-        SExpr::FuncName(name) => FlatResult::Flat(Flat::FuncName(name.clone()),
+        Ast::FuncName(name) => FlatResult::Flat(Flat::FuncName(name.clone()),
                                                 vec![],
                                                 vec![name]),
-        SExpr::Number(n) => FlatResult::Flat(Flat::Number(n),
+        Ast::Number(n) => FlatResult::Flat(Flat::Number(n),
                                              vec![],
                                              vec![]),
-        SExpr::Bool(b) => FlatResult::Flat(Flat::Bool(b),
+        Ast::Bool(b) => FlatResult::Flat(Flat::Bool(b),
                                            vec![],
                                            vec![]),
-        SExpr::Lambda(_, _) =>
+        Ast::Lambda(_, _) =>
             panic!("closure conversion should happen before flatten"),
-        SExpr::Tuple(elts) => {
-            let tup_temp = get_unique_varname("tmp");
+        Ast::Tuple(elts) => {
+            let tup_temp = Rc::new(get_unique_varname("tmp"));
             let mut flat_elts = vec![];
             let mut elts_assigns : Vec<Flat> = vec![];
             let mut elts_vars = vec![];
 
             for elt in elts {
-                let (flat_elt, elt_assigns, elt_vars) =
-                    match flatten(elt) {
-                        FlatResult::Flat(flat, assigns, vars) => (flat, assigns, vars),
-                        _ => panic!("unreachable"),
-                    };
-                flat_elts.push(flat_elt);
-                elts_assigns.extend_from_slice(&elt_assigns);
-                elts_vars.extend_from_slice(&elt_vars);
+                if let FlatResult::Flat(flat, assigns, vars) = flatten(elt) {
+                    flat_elts.push(flat);
+                    elts_assigns.extend_from_slice(&assigns);
+                    elts_vars.extend_from_slice(&vars);
+                } else {
+                    panic!("unreachable")
+                }
             }
 
             elts_assigns.extend_from_slice(&[
-                Flat::Assign(tup_temp.to_string(),
+                Flat::Assign(tup_temp.clone(),
                              box Flat::Tuple(flat_elts))
             ]);
             elts_vars.extend_from_slice(&[tup_temp.clone()]);
@@ -89,42 +89,41 @@ pub fn flatten(expr: SExpr) -> FlatResult {
                                     elts_assigns,
                                     elts_vars)
         },
-        SExpr::Let(bindings, body) => {
-            let (flat_body, body_assigns, body_vars) =
-                match flatten(*body) {
-                    FlatResult::Flat(flat_body, body_assigns, body_vars) => (flat_body, body_assigns, body_vars),
-                    _ => panic!("NYI"),
-                };
+        Ast::Let(bindings, body) => {
+            if let FlatResult::Flat(flat_body, body_assigns, body_vars) = flatten(*body) {
+                let mut bindings_assigns = vec![];
+                let mut bindings_vars = vec![];
+                for (k, v) in bindings {
+                    if let FlatResult::Flat(flat_v, v_assigns, v_vars) = flatten(v) {
+                        match flat_v.clone() {
+                            Flat::Symbol(name) => bindings_vars.push(name),
+                            _ => (),
+                        };
+                        bindings_assigns.extend_from_slice(&v_assigns);
+                        bindings_assigns.extend_from_slice(
+                            &[Flat::Assign(k.clone(), Box::new(flat_v))]
+                        );
+                        bindings_vars.extend_from_slice(&v_vars);
+                        bindings_vars.push(k);
+                    }
+                    else {
+                        panic!("unreachable");
+                    }
+                }
+                bindings_assigns.extend_from_slice(&body_assigns);
+                bindings_vars.extend_from_slice(&body_vars);
+                return FlatResult::Flat(flat_body,
+                                        bindings_assigns,
+                                        bindings_vars);
 
-            let mut bindings_assigns = vec![];
-            let mut bindings_vars = vec![];
-            for (k, v) in bindings {
-                let (flat_v, v_assigns, v_vars) =
-                    match flatten(v) {
-                        FlatResult::Flat(flat_v, v_assigns, v_vars) => (flat_v, v_assigns, v_vars),
-                        _ => panic!("NYI"),
-                    };
-                match flat_v.clone() {
-                    Flat::Symbol(name) => bindings_vars.push(name),
-                    _ => (),
-                };
-                bindings_assigns.extend_from_slice(&v_assigns);
-                bindings_assigns.extend_from_slice(
-                    &[Flat::Assign(k.clone(), Box::new(flat_v))]
-                    );
-                bindings_vars.extend_from_slice(&v_vars);
-                bindings_vars.push(k);
+            } else {
+                panic!("NYI");
             }
-            bindings_assigns.extend_from_slice(&body_assigns);
-            bindings_vars.extend_from_slice(&body_vars);
-            return FlatResult::Flat(flat_body,
-                                    bindings_assigns,
-                                    bindings_vars);
         },
-        SExpr::List(_) => {
+        Ast::List(_) => {
             panic!("NYI");
         },
-        SExpr::Define(name, args, body) => {
+        Ast::Define(name, args, body) => {
             let (flat_body, mut body_assigns, mut body_vars) =
                 match flatten(*body) {
                     FlatResult::Flat(flat_body, body_assigns, body_vars) =>
@@ -145,7 +144,7 @@ pub fn flatten(expr: SExpr) -> FlatResult {
                                       body_assigns,
                                       body_vars);
         },
-        SExpr::If(cnd, thn, els) => {
+        Ast::If(cnd, thn, els) => {
             let (flat_cnd, mut cnd_assigns, mut cnd_vars) =
                 match flatten(*cnd) {
                     FlatResult::Flat(flat_cnd, cnd_assigns, cnd_vars) =>
@@ -165,7 +164,7 @@ pub fn flatten(expr: SExpr) -> FlatResult {
                     _ => panic!("unreachable"),
                 };
 
-            let if_temp = get_unique_varname("if");
+            let if_temp = Rc::new(get_unique_varname("if"));
 
             thn_assigns.extend_from_slice(&[Flat::Assign(if_temp.clone(),
                                                          Box::new(flat_thn))]);
@@ -184,7 +183,7 @@ pub fn flatten(expr: SExpr) -> FlatResult {
                                     cnd_vars);
 
         },
-        SExpr::Cmp(cc, left, right) => {
+        Ast::Cmp(cc, left, right) => {
             let (flat_left, mut left_assigns, mut left_vars) =
                 match flatten(*left) {
                     FlatResult::Flat(flat, assigns, vars) => (flat, assigns, vars),
@@ -195,7 +194,7 @@ pub fn flatten(expr: SExpr) -> FlatResult {
                     FlatResult::Flat(flat, assigns, vars) => (flat, assigns, vars),
                     _ => panic!("unreachable"),
                 };
-            let cmp_temp = get_unique_varname("tmp");
+            let cmp_temp = Rc::new(get_unique_varname("tmp"));
             left_assigns.append(&mut right_assigns);
             left_assigns.extend_from_slice(&[
                 Flat::Assign(cmp_temp.clone(), box Flat::Cmp(cc,
@@ -209,9 +208,9 @@ pub fn flatten(expr: SExpr) -> FlatResult {
                                     left_assigns,
                                     left_vars);
         },
-        SExpr::App(f, args) => {
+        Ast::App(f, args) => {
             match *f {
-                SExpr::Symbol(fname) => {
+                Ast::Symbol(fname) => {
                     match &fname[..] {
                         "-" => {
                             let arg1 = match &args[..] {
@@ -224,9 +223,9 @@ pub fn flatten(expr: SExpr) -> FlatResult {
                                         (flat_e, e_assigns, e_vars),
                                     _ => panic!("unreachable"),
                                 };
-                            let neg_temp = get_unique_varname("tmp");
+                            let neg_temp = Rc::new(get_unique_varname("tmp"));
                             let flat_neg = Flat::Assign(neg_temp.clone(),
-                                                        Box::new(Flat::Prim("-".to_string(), vec![flat_e])));
+                                                        Box::new(Flat::Prim(Rc::new("-".to_string()), vec![flat_e])));
                             e_assigns.extend_from_slice(&[flat_neg]);
                             e_vars.extend_from_slice(&[neg_temp.clone()]);
                             return FlatResult::Flat(Flat::Symbol(neg_temp),
@@ -251,10 +250,10 @@ pub fn flatten(expr: SExpr) -> FlatResult {
                                     _ => panic!("unreachable"),
                                 };
 
-                            let plus_temp = get_unique_varname("tmp");
+                            let plus_temp = Rc::new(get_unique_varname("tmp"));
 
                             let flat_plus = Flat::Assign(plus_temp.clone(),
-                                                         Box::new(Flat::Prim("+".to_string(), vec![flat_e1, flat_e2])));
+                                                         Box::new(Flat::Prim(Rc::new("+".to_string()), vec![flat_e1, flat_e2])));
                             e1_assigns.append(&mut e2_assigns);
                             e1_assigns.extend_from_slice(&[flat_plus]);
 
@@ -271,7 +270,7 @@ pub fn flatten(expr: SExpr) -> FlatResult {
                                 _ => panic!("Wrong no. of args to `tuple-ref`: {:?}", args),
                             };
                             let index = match index {
-                                &SExpr::Number(n) => Flat::Number(n),
+                                &Ast::Number(n) => Flat::Number(n),
                                 &_ => panic!("index to tuple-ref must be a literal number"),
                             };
                             let (flat_tuple, mut tup_assigns, mut tup_vars) =
@@ -281,9 +280,9 @@ pub fn flatten(expr: SExpr) -> FlatResult {
                                     _ => panic!("unreachable"),
                                 };
 
-                            let ref_temp = get_unique_varname("tmp");
+                            let ref_temp = Rc::new(get_unique_varname("tmp"));
                             let flat_ref = Flat::Assign(ref_temp.clone(),
-                                                        Box::new(Flat::Prim("tuple-ref".to_string(),
+                                                        Box::new(Flat::Prim(Rc::new("tuple-ref".to_string()),
                                                                             vec![flat_tuple, index])));
                             tup_assigns.extend_from_slice(&[flat_ref]);
 
@@ -294,46 +293,46 @@ pub fn flatten(expr: SExpr) -> FlatResult {
                                                     tup_vars);
                         },
                         f => {
-                            return flatten(SExpr::App(box SExpr::Symbol("tuple-ref".to_string()),
-                                                      vec![SExpr::Tuple(vec![SExpr::FuncName(f.to_string())]),
-                                                           SExpr::Number(0)]));
+                            return flatten(Ast::App(box Ast::Symbol(Rc::new("tuple-ref".to_string())),
+                                                      vec![Ast::Tuple(vec![Ast::FuncName(fname.clone())]),
+                                                           Ast::Number(0)]));
                         },
                     }
                 },
-                SExpr::App(_, _) => {
-                    let (flat_fref, mut fref_assigns, mut fref_vars) =
-                        match flatten(*f) {
-                            FlatResult::Flat(flat, assigns, vars) =>
-                                (flat, assigns, vars),
-                            _ => panic!("unreachable"),
+                Ast::App(_, _) => {
+                    if let FlatResult::Flat(flat_fref,
+                                            mut fref_assigns,
+                                            mut fref_vars) = flatten(*f) {
+                        let flat_fref = match flat_fref {
+                            Flat::Symbol(fname) => fname,
+                            _ => panic!("unreachable: {:?}", flat_fref),
                         };
-                    let flat_fref = match flat_fref {
-                        Flat::Symbol(fname) => fname,
-                        _ => panic!("unreachable: {:?}", flat_fref),
-                    };
 
-                    let app_temp = get_unique_varname("tmp");
-                    let (flat_args, args_assigns, args_vars) =
-                        flatten_args(&args);
-                    let flat_app = Flat::Assign(app_temp.clone(),
-                                                box Flat::App(flat_fref,
-                                                              flat_args));
+                        let app_temp = Rc::new(get_unique_varname("tmp"));
+                        let (flat_args, args_assigns, args_vars) =
+                            flatten_args(&args);
+                        let flat_app = Flat::Assign(app_temp.clone(),
+                                                    box Flat::App(flat_fref,
+                                                                  flat_args));
 
-                    fref_assigns.extend_from_slice(&args_assigns);
-                    fref_assigns.extend_from_slice(&[flat_app]);
+                        fref_assigns.extend_from_slice(&args_assigns);
+                        fref_assigns.extend_from_slice(&[flat_app]);
 
-                    fref_vars.extend_from_slice(&[app_temp.clone()]);
-                    fref_vars.extend_from_slice(&args_vars);
+                        fref_vars.extend_from_slice(&[app_temp.clone()]);
+                        fref_vars.extend_from_slice(&args_vars[..]);
 
-                    return FlatResult::Flat(Flat::Symbol(app_temp),
-                                            fref_assigns,
-                                            fref_vars);
-
+                        return FlatResult::Flat(Flat::Symbol(app_temp.clone()),
+                                                fref_assigns,
+                                                fref_vars);
+                    } else {
+                        panic!("unreachable");
+                    }
+                    
                 },
                 _ => panic!("not a function: {:?}", f),
             }
         },
-        SExpr::Prog(defs, e) => {
+        Ast::Prog(defs, e) => {
             let (flat_e, mut e_assigns, mut e_vars) =
                 match flatten(*e) {
                     FlatResult::Flat(flat_e, e_assigns, e_vars) =>
@@ -354,7 +353,7 @@ pub fn flatten(expr: SExpr) -> FlatResult {
                                     e_assigns,
                                     e_vars);
         },
-        SExpr::EOF => panic!("Don't know what to do with EOF"),
+        _ => unimplemented!(),
     }
 }
 
@@ -373,7 +372,7 @@ fn test_flatten() {
     };
 
     assert_eq!(
-        flatten(SExpr::Prog(vec![], Box::new(read(&mut lexer)))),
+        flatten(Ast::Prog(vec![], Box::new(read(&mut lexer)))),
         FlatResult::Prog(vec![],
                          vec![Flat::Assign("tmp1".to_string(), Box::new(Flat::Prim("+".to_string(),
                                                                                    vec![Flat::Number(13), Flat::Number(14)]))),
@@ -387,9 +386,9 @@ fn test_flatten() {
     // TODO: Reset start(var counter) so that these asserts are
     // independent.
     assert_eq!(
-        flatten(SExpr::Define("foo".to_string(), vec!["x".to_string(), "y".to_string(), "z".to_string()],
-                              Box::new(SExpr::App(Box::new(SExpr::Symbol("+".to_string())),
-                                                  vec![SExpr::Symbol("x".to_string()), SExpr::Number(10)])))),
+        flatten(Ast::Define("foo".to_string(), vec!["x".to_string(), "y".to_string(), "z".to_string()],
+                              Box::new(Ast::App(Box::new(Ast::Symbol("+".to_string())),
+                                                  vec![Ast::Symbol("x".to_string()), Ast::Number(10)])))),
         FlatResult::Define("foo".to_string(),
                            vec!["x".to_string(), "y".to_string(), "z".to_string()],
                            vec![Flat::Assign("tmp3".to_string(),

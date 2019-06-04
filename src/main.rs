@@ -17,10 +17,11 @@ mod util;
 mod lexer;
 mod ast;
 mod parser;
-// mod anf;
+mod anf;
 
 use parser::Parser;
 use ast::Ast;
+use anf::flatten;
 
 fn read_input(filename: &str, mut input_buffer: &mut String)
               -> io::Result<()> {
@@ -55,8 +56,11 @@ pub fn main() {
         .convert_to_closures(&HashSet::new(),
                              &HashSet::new());
 
-    println!("Closures converted {:?}",
+    println!("Closures converted: {:?}",
              closures_converted);
+
+    println!("Flattened: {:?}",
+             flatten(closures_converted));
 
     println!("{:?}", toplevel);
 }
