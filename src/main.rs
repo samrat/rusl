@@ -15,12 +15,12 @@ extern crate log;
 
 mod util;
 mod lexer;
+mod ast;
 mod parser;
 // mod anf;
 
-use util::get_unique_varname;
-
-use parser::{Parser, Ast};
+use parser::Parser;
+use ast::Ast;
 
 fn read_input(filename: &str, mut input_buffer: &mut String)
               -> io::Result<()> {
