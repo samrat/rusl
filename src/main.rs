@@ -60,7 +60,7 @@ pub fn main() {
              closures_converted);
 
     println!("Flattened: {:?}",
-             flatten(closures_converted));
+             flatten(&closures_converted));
 
     println!("{:?}", toplevel);
 }

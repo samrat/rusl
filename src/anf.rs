@@ -31,7 +31,7 @@ fn flatten_args(args: &[Ast])
     let mut args_vars = vec![];
 
     for arg in args {
-        match flatten(arg.clone()) {
+        match flatten(arg) {
             FlatResult::Flat(flat, assigns, vars) => {
                 flat_args.push(flat);
                 args_assigns.extend_from_slice(&assigns);
@@ -47,18 +47,18 @@ fn flatten_args(args: &[Ast])
 
 // This function does and ANF transformation. The output is a Flat
 // expression.
-pub fn flatten(expr: Ast) -> FlatResult {
+pub fn flatten(expr: &Ast) -> FlatResult {
     match expr {
         Ast::Symbol(name) => FlatResult::Flat(Flat::Symbol(name.clone()),
                                                 vec![],
-                                                vec![name]),
+                                                vec![name.clone()]),
         Ast::FuncName(name) => FlatResult::Flat(Flat::FuncName(name.clone()),
                                                 vec![],
-                                                vec![name]),
-        Ast::Number(n) => FlatResult::Flat(Flat::Number(n),
+                                                vec![name.clone()]),
+        Ast::Number(n) => FlatResult::Flat(Flat::Number(*n),
                                              vec![],
                                              vec![]),
-        Ast::Bool(b) => FlatResult::Flat(Flat::Bool(b),
+        Ast::Bool(b) => FlatResult::Flat(Flat::Bool(*b),
                                            vec![],
                                            vec![]),
         Ast::Lambda(_, _) =>
@@ -90,7 +90,7 @@ pub fn flatten(expr: Ast) -> FlatResult {
                                     elts_vars)
         },
         Ast::Let(bindings, body) => {
-            if let FlatResult::Flat(flat_body, body_assigns, body_vars) = flatten(*body) {
+            if let FlatResult::Flat(flat_body, body_assigns, body_vars) = flatten(body) {
                 let mut bindings_assigns = vec![];
                 let mut bindings_vars = vec![];
                 for (k, v) in bindings {
@@ -104,7 +104,7 @@ pub fn flatten(expr: Ast) -> FlatResult {
                             &[Flat::Assign(k.clone(), Box::new(flat_v))]
                         );
                         bindings_vars.extend_from_slice(&v_vars);
-                        bindings_vars.push(k);
+                        bindings_vars.push(k.clone());
                     }
                     else {
                         panic!("unreachable");
@@ -125,7 +125,7 @@ pub fn flatten(expr: Ast) -> FlatResult {
         },
         Ast::Define(name, args, body) => {
             let (flat_body, mut body_assigns, mut body_vars) =
-                match flatten(*body) {
+                match flatten(body) {
                     FlatResult::Flat(flat_body, body_assigns, body_vars) =>
                         (flat_body, body_assigns, body_vars),
                     _ => panic!("unreachable"),
@@ -135,30 +135,30 @@ pub fn flatten(expr: Ast) -> FlatResult {
             ]);
 
             // Remove args from body_vars
-            for arg in args.clone() {
-                body_vars = body_vars.iter().filter(|&v| v != &arg).cloned().collect();
+            for arg in args {
+                body_vars = body_vars.iter().filter(|v| v != &arg).cloned().collect();
             }
 
-            return FlatResult::Define(name,
-                                      args,
+            return FlatResult::Define(name.clone(),
+                                      args.to_vec(),
                                       body_assigns,
                                       body_vars);
         },
         Ast::If(cnd, thn, els) => {
             let (flat_cnd, mut cnd_assigns, mut cnd_vars) =
-                match flatten(*cnd) {
+                match flatten(cnd) {
                     FlatResult::Flat(flat_cnd, cnd_assigns, cnd_vars) =>
                         (flat_cnd, cnd_assigns, cnd_vars),
                     _ => panic!("unreachable"),
                 };
             let (flat_thn, mut thn_assigns, mut thn_vars) =
-                match flatten(*thn) {
+                match flatten(thn) {
                     FlatResult::Flat(flat_thn, thn_assigns, thn_vars) =>
                         (flat_thn, thn_assigns, thn_vars),
                     _ => panic!("unreachable"),
                 };
             let (flat_els, mut els_assigns, mut els_vars) =
-                match flatten(*els) {
+                match flatten(els) {
                     FlatResult::Flat(flat_els, els_assigns, els_vars) =>
                         (flat_els, els_assigns, els_vars),
                     _ => panic!("unreachable"),
@@ -185,19 +185,19 @@ pub fn flatten(expr: Ast) -> FlatResult {
         },
         Ast::Cmp(cc, left, right) => {
             let (flat_left, mut left_assigns, mut left_vars) =
-                match flatten(*left) {
+                match flatten(left) {
                     FlatResult::Flat(flat, assigns, vars) => (flat, assigns, vars),
                     _ => panic!("unreachable"),
                 };
             let (flat_right, mut right_assigns, mut right_vars) =
-                match flatten(*right) {
+                match flatten(right) {
                     FlatResult::Flat(flat, assigns, vars) => (flat, assigns, vars),
                     _ => panic!("unreachable"),
                 };
             let cmp_temp = Rc::new(get_unique_varname("tmp"));
             left_assigns.append(&mut right_assigns);
             left_assigns.extend_from_slice(&[
-                Flat::Assign(cmp_temp.clone(), box Flat::Cmp(cc,
+                Flat::Assign(cmp_temp.clone(), box Flat::Cmp(cc.clone(),
                                                              box flat_left,
                                                              box flat_right))
             ]);
@@ -209,8 +209,8 @@ pub fn flatten(expr: Ast) -> FlatResult {
                                     left_vars);
         },
         Ast::App(f, args) => {
-            match *f {
-                Ast::Symbol(fname) => {
+            match f {
+                box Ast::Symbol(fname) => {
                     match &fname[..] {
                         "-" => {
                             let arg1 = match &args[..] {
@@ -218,7 +218,7 @@ pub fn flatten(expr: Ast) -> FlatResult {
                                 _ => panic!("Wrong no. of args to `-`: {:?}", args),
                             };
                             let (flat_e, mut e_assigns, mut e_vars) =
-                                match flatten(arg1.clone()) {
+                                match flatten(arg1) {
                                     FlatResult::Flat(flat_e, e_assigns, e_vars) =>
                                         (flat_e, e_assigns, e_vars),
                                     _ => panic!("unreachable"),
@@ -238,13 +238,13 @@ pub fn flatten(expr: Ast) -> FlatResult {
                                 _ => panic!("Wrong no. of args to `+`"),
                             };
                             let (flat_e1, mut e1_assigns, mut e1_vars) =
-                                match flatten(arg1.clone()) {
+                                match flatten(arg1) {
                                     FlatResult::Flat(flat_e1, e1_assigns, e1_vars) =>
                                         (flat_e1, e1_assigns, e1_vars),
                                     _ => panic!("unreachable"),
                                 };
                             let (flat_e2, mut e2_assigns, mut e2_vars) =
-                                match flatten(arg2.clone()) {
+                                match flatten(arg2) {
                                     FlatResult::Flat(flat_e2, e2_assigns, e2_vars) =>
                                         (flat_e2, e2_assigns, e2_vars),
                                     _ => panic!("unreachable"),
@@ -274,7 +274,7 @@ pub fn flatten(expr: Ast) -> FlatResult {
                                 &_ => panic!("index to tuple-ref must be a literal number"),
                             };
                             let (flat_tuple, mut tup_assigns, mut tup_vars) =
-                                match flatten(tuple.clone()) {
+                                match flatten(tuple) {
                                     FlatResult::Flat(flat, assigns, vars) =>
                                         (flat, assigns, vars),
                                     _ => panic!("unreachable"),
@@ -293,16 +293,16 @@ pub fn flatten(expr: Ast) -> FlatResult {
                                                     tup_vars);
                         },
                         f => {
-                            return flatten(Ast::App(box Ast::Symbol(Rc::new("tuple-ref".to_string())),
-                                                      vec![Ast::Tuple(vec![Ast::FuncName(fname.clone())]),
-                                                           Ast::Number(0)]));
+                            return flatten(&Ast::App(box Ast::Symbol(Rc::new("tuple-ref".to_string())),
+                                                     vec![Ast::Tuple(vec![Ast::FuncName(fname.clone())]),
+                                                          Ast::Number(0)]));
                         },
                     }
                 },
-                Ast::App(_, _) => {
+                box Ast::App(_, _) => {
                     if let FlatResult::Flat(flat_fref,
                                             mut fref_assigns,
-                                            mut fref_vars) = flatten(*f) {
+                                            mut fref_vars) = flatten(f) {
                         let flat_fref = match flat_fref {
                             Flat::Symbol(fname) => fname,
                             _ => panic!("unreachable: {:?}", flat_fref),
@@ -334,7 +334,7 @@ pub fn flatten(expr: Ast) -> FlatResult {
         },
         Ast::Prog(defs, e) => {
             let (flat_e, mut e_assigns, mut e_vars) =
-                match flatten(*e) {
+                match flatten(e) {
                     FlatResult::Flat(flat_e, e_assigns, e_vars) =>
                         (flat_e, e_assigns, e_vars),
                     _ => panic!("unreachable"),
