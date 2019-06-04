@@ -207,6 +207,10 @@ impl Ast {
         }
     }
 
+    /// Converts a lambda into a top-level define'd function. For all
+    /// functions, adds a closure arg, and updates function
+    /// applications to pass the closure arg. The `clos` arg is a
+    /// tuple (f, a1, ..., an) capturing free variables.
     pub fn convert_to_closures(&self, env: &HashSet<Rc<String>>, toplevel_funs: &HashSet<Rc<String>>)
                            -> (Ast, Vec<Ast>) {
         match self {
