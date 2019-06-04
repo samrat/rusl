@@ -359,41 +359,44 @@ pub fn flatten(expr: &Ast) -> FlatResult {
 
 #[test]
 fn test_flatten() {
-    use lexer::LexerState;
-    use parser::read;
+    use parser::Parser;
 
     let input = String::from("(+ 12 (+ 13 14))");
-    let mut lexer = LexerState {
-        s: input,
-        pos: 0,
-        col: 1,
-        line_num: 1,
-        tok_buf: None,
-    };
+    let parser = Parser::new(&input);
+    let toplevel : Vec<_> = parser.collect();
 
     assert_eq!(
-        flatten(Ast::Prog(vec![], Box::new(read(&mut lexer)))),
+        flatten(&Ast::Prog(vec![], Box::new(toplevel[0].clone()))),
         FlatResult::Prog(vec![],
-                         vec![Flat::Assign("tmp1".to_string(), Box::new(Flat::Prim("+".to_string(),
+                         vec![Flat::Assign(Rc::new("tmp1".to_string()), Box::new(Flat::Prim(Rc::new("+".to_string()),
                                                                                    vec![Flat::Number(13), Flat::Number(14)]))),
-                              Flat::Assign("tmp2".to_string(),
-                                           Box::new(Flat::Prim("+".to_string(),
-                                                               vec![Flat::Number(12), Flat::Symbol("tmp1".to_string())]))),
-                              Flat::Return(Box::new(Flat::Symbol("tmp2".to_string())))],
-                         vec!["tmp1".to_string(), "tmp2".to_string()])
+                              Flat::Assign(Rc::new("tmp2".to_string()),
+                                           Box::new(Flat::Prim(Rc::new("+".to_string()),
+                                                               vec![Flat::Number(12),
+                                                                    Flat::Symbol(Rc::new("tmp1".to_string()))]))),
+                              Flat::Return(Box::new(Flat::Symbol(Rc::new("tmp2".to_string()))))],
+                         vec![Rc::new("tmp1".to_string()),
+                              Rc::new("tmp2".to_string())])
     );
 
     // TODO: Reset start(var counter) so that these asserts are
     // independent.
     assert_eq!(
-        flatten(Ast::Define("foo".to_string(), vec!["x".to_string(), "y".to_string(), "z".to_string()],
-                              Box::new(Ast::App(Box::new(Ast::Symbol("+".to_string())),
-                                                  vec![Ast::Symbol("x".to_string()), Ast::Number(10)])))),
-        FlatResult::Define("foo".to_string(),
-                           vec!["x".to_string(), "y".to_string(), "z".to_string()],
-                           vec![Flat::Assign("tmp3".to_string(),
-                                             Box::new(Flat::Prim("+".to_string(), vec![Flat::Symbol("x".to_string()), Flat::Number(10)]))),
-                                Flat::Return(Box::new(Flat::Symbol("tmp3".to_string())))],
-                           vec!["tmp3".to_string()])
+        flatten(&Ast::Define(Rc::new("foo".to_string()),
+                             vec![Rc::new("x".to_string()),
+                                  Rc::new("y".to_string()),
+                                  Rc::new("z".to_string())],
+                             box (Ast::App(box (Ast::Symbol(Rc::new("+".to_string()))),
+                                           vec![Ast::Symbol(Rc::new("x".to_string())),
+                                                Ast::Number(10)])))),
+        FlatResult::Define(Rc::new("foo".to_string()),
+                           vec![Rc::new("x".to_string()),
+                                Rc::new("y".to_string()),
+                                Rc::new("z".to_string())],
+                           vec![Flat::Assign(Rc::new("tmp3".to_string()),
+                                             Box::new(Flat::Prim(Rc::new("+".to_string()),
+                                                                 vec![Flat::Symbol(Rc::new("x".to_string())), Flat::Number(10)]))),
+                                Flat::Return(Box::new(Flat::Symbol(Rc::new("tmp3".to_string()))))],
+                           vec![Rc::new("tmp3".to_string())])
     );
 }
