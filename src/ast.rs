@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
+use util::get_unique_varname;
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum CC {
     // condition codes
@@ -26,14 +28,6 @@ pub enum Ast {
     App(Box<Ast>, Vec<Ast>),
     Prog(Vec<Ast>, Box<Ast>),
     Nil,
-}
-
-static mut VAR_COUNTER : i32 = 0;
-pub fn get_unique_varname(stem: &str) -> String {
-    unsafe {
-        VAR_COUNTER += 1;
-        return stem.to_string() + &VAR_COUNTER.to_string();
-    }
 }
 
 impl Ast {
