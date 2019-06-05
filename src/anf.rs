@@ -41,7 +41,7 @@ fn flatten_args(args: &[Ast])
         };
     }
 
-    return (flat_args, args_assigns, args_vars);
+    (flat_args, args_assigns, args_vars)
 }
 
 
@@ -85,9 +85,9 @@ pub fn flatten(expr: &Ast) -> FlatResult {
             ]);
             elts_vars.extend_from_slice(&[tup_temp.clone()]);
 
-            return FlatResult::Flat(Flat::Symbol(tup_temp),
-                                    elts_assigns,
-                                    elts_vars)
+            FlatResult::Flat(Flat::Symbol(tup_temp),
+                             elts_assigns,
+                             elts_vars)
         },
         Ast::Let(bindings, body) => {
             if let FlatResult::Flat(flat_body, body_assigns, body_vars) = flatten(body) {
@@ -139,10 +139,10 @@ pub fn flatten(expr: &Ast) -> FlatResult {
                 body_vars = body_vars.iter().filter(|v| v != &arg).cloned().collect();
             }
 
-            return FlatResult::Define(name.clone(),
-                                      args.to_vec(),
-                                      body_assigns,
-                                      body_vars);
+            FlatResult::Define(name.clone(),
+                               args.to_vec(),
+                               body_assigns,
+                               body_vars)
         },
         Ast::If(cnd, thn, els) => {
             let (flat_cnd, mut cnd_assigns, mut cnd_vars) =
@@ -178,9 +178,9 @@ pub fn flatten(expr: &Ast) -> FlatResult {
             cnd_vars.append(&mut thn_vars);
             cnd_vars.append(&mut els_vars);
             cnd_vars.extend_from_slice(&[if_temp.clone()]);
-            return FlatResult::Flat(Flat::Symbol(if_temp),
-                                    cnd_assigns,
-                                    cnd_vars);
+            FlatResult::Flat(Flat::Symbol(if_temp),
+                             cnd_assigns,
+                             cnd_vars)
 
         },
         Ast::Cmp(cc, left, right) => {
@@ -204,9 +204,9 @@ pub fn flatten(expr: &Ast) -> FlatResult {
             left_vars.append(&mut right_vars);
             left_vars.push(cmp_temp.clone());
 
-            return FlatResult::Flat(Flat::Symbol(cmp_temp),
-                                    left_assigns,
-                                    left_vars);
+            FlatResult::Flat(Flat::Symbol(cmp_temp),
+                             left_assigns,
+                             left_vars)
         },
         Ast::App(f, args) => {
             match f {
@@ -228,9 +228,9 @@ pub fn flatten(expr: &Ast) -> FlatResult {
                                                         Box::new(Flat::Prim(Rc::new("-".to_string()), vec![flat_e])));
                             e_assigns.extend_from_slice(&[flat_neg]);
                             e_vars.extend_from_slice(&[neg_temp.clone()]);
-                            return FlatResult::Flat(Flat::Symbol(neg_temp),
-                                                    e_assigns,
-                                                    e_vars);
+                            FlatResult::Flat(Flat::Symbol(neg_temp),
+                                             e_assigns,
+                                             e_vars)
                         },
                         "+" => {
                             let (arg1, arg2) = match &args[..] {
@@ -260,9 +260,9 @@ pub fn flatten(expr: &Ast) -> FlatResult {
                             e1_vars.append(&mut e2_vars);
                             e1_vars.extend_from_slice(&[plus_temp.clone()]);
 
-                            return FlatResult::Flat(Flat::Symbol(plus_temp),
-                                                    e1_assigns,
-                                                    e1_vars);
+                            FlatResult::Flat(Flat::Symbol(plus_temp),
+                                             e1_assigns,
+                                             e1_vars)
                         },
                         "tuple-ref" => {
                             let (tuple, index) = match &args[..] {
@@ -288,14 +288,14 @@ pub fn flatten(expr: &Ast) -> FlatResult {
 
                             tup_vars.extend_from_slice(&[ref_temp.clone()]);
 
-                            return FlatResult::Flat(Flat::Symbol(ref_temp),
-                                                    tup_assigns,
-                                                    tup_vars);
+                            FlatResult::Flat(Flat::Symbol(ref_temp),
+                                             tup_assigns,
+                                             tup_vars)
                         },
                         f => {
-                            return flatten(&Ast::App(box Ast::Symbol(Rc::new("tuple-ref".to_string())),
-                                                     vec![Ast::Tuple(vec![Ast::FuncName(fname.clone())]),
-                                                          Ast::Number(0)]));
+                            flatten(&Ast::App(box Ast::Symbol(Rc::new("tuple-ref".to_string())),
+                                              vec![Ast::Tuple(vec![Ast::FuncName(fname.clone())]),
+                                                   Ast::Number(0)]))
                         },
                     }
                 },
@@ -349,9 +349,9 @@ pub fn flatten(expr: &Ast) -> FlatResult {
                 flat_defs.push(flatten(def));
             }
 
-            return FlatResult::Prog(flat_defs,
-                                    e_assigns,
-                                    e_vars);
+            FlatResult::Prog(flat_defs,
+                             e_assigns,
+                             e_vars)
         },
         _ => unimplemented!(),
     }

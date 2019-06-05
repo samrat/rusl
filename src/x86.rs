@@ -82,8 +82,8 @@ pub enum X86 {
     Label(Rc<String>),
 }
 
-const CONST_TRUE : u64  = 0xffffffffffffffff;
-const CONST_FALSE : u64 = 0x7fffffffffffffff;
+const CONST_TRUE : u64  = 0xffff_ffff_ffff_ffff;
+const CONST_FALSE : u64 = 0x7fff_ffff_ffff_ffff;
 
 // R11 is used to point to heap
 pub const CALLEE_SAVE_REGS : [Reg;5] =
@@ -214,7 +214,7 @@ fn flat_to_px86(instr: Flat) -> Vec<X86> {
                                 ret.push(X86::Add(X86Arg::Var(dest),
                                                   flat_arg_type(arg2)));
                                 ret.extend_from_slice(&ensure_number(flat_arg_type(arg2)));
-                                return ret;
+                                ret
                             },
                             "-" => {
                                 let arg = match &args[..] {
@@ -227,7 +227,8 @@ fn flat_to_px86(instr: Flat) -> Vec<X86> {
                                                             flat_arg_type(arg))];
                                 ret.extend_from_slice(&ensure_number(flat_arg_type(arg)));
                                 ret.push(X86::Neg(X86Arg::Var(dest.clone())));
-                                return ret;
+                                
+                                ret
                             },
                             "tuple-ref" => {
                                 let (tuple, index) = match &args[..] {
@@ -252,7 +253,7 @@ fn flat_to_px86(instr: Flat) -> Vec<X86> {
                                                                                   8*(index+1)))
                                 ]);
 
-                                return ret;
+                                ret
                             },
                             _ => panic!("primitive not defined"),
                         }
@@ -287,7 +288,7 @@ fn flat_to_px86(instr: Flat) -> Vec<X86> {
                             X86::Mov(X86Arg::Var(dest), X86Arg::Reg(Reg::RAX))
                         ]);
 
-                        return instrs;
+                        instrs
                     },
                     Flat::Cmp(cc, left, right) => {
                         let false_label = Rc::new(get_unique_varname("false"));
@@ -307,7 +308,7 @@ fn flat_to_px86(instr: Flat) -> Vec<X86> {
                                                 X86::Label(false_label),
                                                 X86::Mov(X86Arg::Var(dest), X86Arg::Imm(CONST_FALSE)),
                                                 X86::Label(done_label),]);
-                        return ret;
+                        ret
                     },
                     Flat::Tuple(elts) => {
                         // with count in first word
@@ -340,7 +341,7 @@ fn flat_to_px86(instr: Flat) -> Vec<X86> {
                             X86::Add(X86Arg::Var(dest), X86Arg::Imm(1))
                         ]);
 
-                        return instrs;
+                        instrs
                     },
                     _ => {
                         println!("{:?}", x);
@@ -406,9 +407,9 @@ pub fn select_instructions(flat_prog: FlatResult) -> X86 {
             }
 
             vars.extend_from_slice(&args);
-            return X86::Define(name,
-                               vars,
-                               x86_instrs);
+            X86::Define(name,
+                        vars,
+                        x86_instrs)
         },
 
         FlatResult::Prog(defs, main_assigns, main_vars) => {
@@ -422,7 +423,7 @@ pub fn select_instructions(flat_prog: FlatResult) -> X86 {
                 let mut i_instrs = flat_to_px86(i);
                 x86_instrs.append(&mut i_instrs);
             }
-            return X86::Prog(x86_defines, x86_instrs, main_vars);
+            X86::Prog(x86_defines, x86_instrs, main_vars)
         },
         _ => panic!("flat_prog is not a top-level Prog"),
     }
@@ -433,33 +434,33 @@ pub fn select_instructions(flat_prog: FlatResult) -> X86 {
 fn instruction_rw(instr: X86) -> (Vec<Rc<String>>, Vec<Rc<String>>, Vec<Rc<String>>) {
     match instr {
         X86::Mov(X86Arg::Var(dest), X86Arg::Var(src)) => {
-            return (vec![dest.clone(), src.clone()],
-                    vec![src],
-                    vec![dest]);
+            (vec![dest.clone(), src.clone()],
+             vec![src],
+             vec![dest])
         },
         X86::Mov(X86Arg::Var(dest), _) => {
-            return (vec![dest.clone()],
-                    vec![],
-                    vec![dest]);
+            (vec![dest.clone()],
+             vec![],
+             vec![dest])
         },
         X86::Mov(X86Arg::Reg(_), X86Arg::Var(src)) => {
-            return (vec![src.clone()],
-                    vec![src],
-                    vec![]);
+            (vec![src.clone()],
+             vec![src],
+             vec![])
         },
         X86::Mov(X86Arg::RegOffset(_, _), X86Arg::Var(src)) => {
-            return (vec![src.clone()],
-                    vec![src],
-                    vec![]);
+            (vec![src.clone()],
+             vec![src],
+             vec![])
         },
         X86::Mov(_, _) => {
-            return (vec![], vec![], vec![]);
+            (vec![], vec![], vec![])
         },
         X86::MovZx(_, _) => {
-            return (vec![], vec![], vec![]);
+            (vec![], vec![], vec![])
         },
         X86::Set(_, _) =>  {
-            return (vec![], vec![], vec![]);
+            (vec![], vec![], vec![])
         },
 
         X86::Cmp(left, right) => {
@@ -479,37 +480,37 @@ fn instruction_rw(instr: X86) -> (Vec<Rc<String>>, Vec<Rc<String>>, Vec<Rc<Strin
         },
         X86::Sub(X86Arg::Var(dest), X86Arg::Var(src)) |
         X86::Add(X86Arg::Var(dest), X86Arg::Var(src)) => {
-            return (vec![dest.clone(), src.clone()],
-                    vec![dest.clone(), src],
-                    vec![dest]);
+            (vec![dest.clone(), src.clone()],
+             vec![dest.clone(), src],
+             vec![dest])
         },
         X86::And(X86Arg::Var(dest), X86Arg::Var(src)) => {
-            return (vec![dest.clone(), src.clone()],
-                    vec![dest.clone(), src],
-                    vec![dest]);
+            (vec![dest.clone(), src.clone()],
+             vec![dest.clone(), src],
+             vec![dest])
         },
         X86::Sub(X86Arg::Var(dest), _) |
         X86::Add(X86Arg::Var(dest), _) => {
-            return (vec![dest.clone()],
-                    vec![dest.clone()],
-                    vec![dest]);
+            (vec![dest.clone()],
+             vec![dest.clone()],
+             vec![dest])
         },
         X86::And(X86Arg::Var(dest), _) => {
-            return (vec![dest.clone()],
-                    vec![dest.clone()],
-                    vec![dest]);
+            (vec![dest.clone()],
+             vec![dest.clone()],
+             vec![dest])
         },
         X86::Neg(X86Arg::Var(n)) => {
-            return (vec![n.clone()],
-                    vec![n.clone()],
-                    vec![n.clone()]);
+            (vec![n.clone()],
+             vec![n.clone()],
+             vec![n.clone()])
         },
         X86::Sub(X86Arg::Reg(_), X86Arg::Imm(_)) |
         X86::Add(X86Arg::GlobalVal(_), X86Arg::Imm(_)) |
         X86::And(X86Arg::Reg(_), X86Arg::Imm(_)) |
         X86::Push(_) | X86::Pop(_) | X86::Call(_) | X86::Jne(_) | X86::Je(_) |
         X86::Label(_) | X86::Jmp(_) =>
-            return (vec![], vec![], vec![]),
+            (vec![], vec![], vec![]),
         _ => panic!("NYI: {:?}", instr),
     }
 }
@@ -582,24 +583,24 @@ fn get_live_after_sets(mut instrs: Vec<X86>, lives: HashSet<Rc<String>>)
 
     live_after_sets.reverse();
     new_instrs.reverse();
-    return (live_of_next, live_after_sets, new_instrs);
+    (live_of_next, live_after_sets, new_instrs)
 }
 
 pub fn uncover_live(prog: X86) -> X86 {
     match prog {
         X86::Define(name, vars, instrs) => {
             let (_, live_sets, new_instrs) = get_live_after_sets(instrs, HashSet::new());
-            return X86::DefineWithLives(name, vars, live_sets, new_instrs);
+            X86::DefineWithLives(name, vars, live_sets, new_instrs)
         },
 
         X86::Prog(mut defs, instrs, vars) => {
             let (_, live_sets, new_instrs) = get_live_after_sets(instrs, HashSet::new());
 
             defs = defs.iter().map(|def| uncover_live(def.clone())).collect();
-            return X86::ProgWithLives(defs,
-                                      new_instrs,
-                                      vars,
-                                      live_sets);
+            X86::ProgWithLives(defs,
+                               new_instrs,
+                               vars,
+                               live_sets)
         },
         _ => panic!("prog is not a top-level Prog"),
     }
@@ -674,7 +675,7 @@ fn allocate_registers(live_intervals: HashMap<Rc<String>, (i32, i32)>)
         // add current to active_intervals
         active_intervals.insert((v.clone(), (start, end)));
     }
-    return mapping;
+    mapping
 }
 
 fn assign_homes_to_op2(locs: &HashMap<Rc<String>, X86Arg>,
@@ -777,7 +778,7 @@ fn assign_homes_to_instrs(instrs: Vec<X86>, locs: HashMap<Rc<String>, X86Arg>) -
         }
     };
 
-    return new_instrs;
+    new_instrs
 }
 
 fn decide_locs(vars: &Vec<Rc<String>>, instrs: &Vec<X86>,
@@ -803,15 +804,15 @@ fn decide_locs(vars: &Vec<Rc<String>>, instrs: &Vec<X86>,
         );
     };
 
-    return (locs, stack_size);
+    (locs, stack_size)
 }
 
 pub fn assign_homes(prog: X86) -> X86 {
     match prog {
         X86::DefineWithLives(name, vars, live_sets, instrs) => {
             let (locs, stack_size) = decide_locs(&vars, &instrs, live_sets);
-            return X86::DefineWithStackSize(name, stack_size,
-                                            assign_homes_to_instrs(instrs, locs));
+            X86::DefineWithStackSize(name, stack_size,
+                                     assign_homes_to_instrs(instrs, locs))
         },
 
         X86::ProgWithLives(defs, instrs, vars, live_sets) => {
@@ -821,7 +822,7 @@ pub fn assign_homes(prog: X86) -> X86 {
                 new_defs.push(assign_homes(def));
             }
 
-            return X86::ProgWithStackSize(new_defs, assign_homes_to_instrs(instrs, locs), stack_size);
+            X86::ProgWithStackSize(new_defs, assign_homes_to_instrs(instrs, locs), stack_size)
         },
         _ => panic!("assign_homes: not top level prog"),
     }
@@ -863,7 +864,7 @@ fn lower_if (instr: X86) -> Vec<X86> {
                 X86::Label(end_label),
             ]);
 
-            return if_instrs;
+            if_instrs
         },
         _ => vec![instr],
     }
@@ -875,13 +876,13 @@ pub fn lower_conditionals(prog: X86) -> X86 {
         X86::DefineWithStackSize(name, stack_size, mut instrs) => {
             instrs = instrs.iter().flat_map(|i| lower_if(i.clone())).collect();
 
-            return X86::DefineWithStackSize(name, stack_size, instrs);
+            X86::DefineWithStackSize(name, stack_size, instrs)
         },
         X86::ProgWithStackSize(mut defs, mut instrs, stack_size) => {
             instrs = instrs.iter().flat_map(|i| lower_if(i.clone())).collect();
             defs = defs.iter().map(|d| lower_conditionals(d.clone())).collect();
 
-            return X86::ProgWithStackSize(defs, instrs, stack_size);
+            X86::ProgWithStackSize(defs, instrs, stack_size)
         }
         _ => panic!("lower_conditionals: not top-level Prog"),
     }
@@ -953,9 +954,9 @@ pub fn patch_instructions(prog: X86) -> X86 {
             let patched_instrs =
                 instrs.iter().flat_map(|i| patch_single_instr(i.clone())).collect();
 
-            return X86::DefineWithStackSize(name,
-                                            stack_size,
-                                            patched_instrs);
+            X86::DefineWithStackSize(name,
+                                     stack_size,
+                                     patched_instrs)
         },
         X86::ProgWithStackSize(mut defs, instrs, stack_size) => {
             let patched_instrs =
@@ -963,7 +964,7 @@ pub fn patch_instructions(prog: X86) -> X86 {
 
             defs = defs.iter().map(|d| patch_instructions(d.clone())).collect();
 
-            return X86::ProgWithStackSize(defs, patched_instrs, stack_size);
+            X86::ProgWithStackSize(defs, patched_instrs, stack_size)
         },
         _ => panic!("patch_instructions: not top-level Prog"),
     }

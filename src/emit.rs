@@ -1,5 +1,5 @@
 use x86::{Reg, X86Arg, X86,
-          CALLEE_SAVE_REGS, CALLER_SAVE_REGS, ARG_REG_ORDER};
+          CALLEE_SAVE_REGS};
 use ast::CC;
 
 fn display_reg(reg: &Reg) -> String {
@@ -109,7 +109,7 @@ pub fn print_x86(prog: X86) -> String {
                                                    display_reg(r)));
     }
 
-    let instrs_str = match prog {
+    match prog {
         X86::DefineWithStackSize(name, stack_size, instrs) => {
             let stack_size = 8 * stack_size;
             let prelude = format!("{}:
@@ -177,7 +177,5 @@ internal_error_non_tuple:
             instrs_str
         },
         _ => panic!("print_x86: not top-level Prog"),
-    };
-
-    return instrs_str;
+    }
 }

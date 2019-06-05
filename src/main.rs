@@ -7,11 +7,7 @@ use std::collections::HashSet;
 use std::io::prelude::*;
 use std::fs::File;
 use std::env;
-use std::process;
 use std::rc::Rc;
-
-#[macro_use]
-extern crate log;
 
 mod util;
 mod lexer;

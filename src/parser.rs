@@ -1,9 +1,6 @@
-#![feature(bind_by_move_pattern_guards)]
-
 use lexer::{Token, Lexer};
 use ast::{Ast, CC};
 
-use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 pub struct Parser<'input> {
@@ -27,7 +24,7 @@ impl<'input> Parser<'input> {
                     let mut seq = self.get_list();
                     seq.insert(0, expr);
 
-                    return seq;
+                    seq
                 }
             },
             None => vec![],

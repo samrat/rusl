@@ -61,9 +61,9 @@ impl Ast {
                 Ast::List(new_elts)
             },
             Ast::Cmp(cc, left, right) =>
-                return Ast::Cmp(cc.clone(),
-                                box left.uniquify(mapping),
-                                box right.uniquify(mapping)),
+                Ast::Cmp(cc.clone(),
+                         box left.uniquify(mapping),
+                         box right.uniquify(mapping)),
             Ast::Lambda(args, body) => {
                 let mut new_args = vec![];
                 for arg in args {
@@ -136,7 +136,7 @@ impl Ast {
                 cnd_freevars.extend_from_slice(&thn_freevars);
                 cnd_freevars.extend_from_slice(&els_freevars);
 
-                return cnd_freevars;
+                cnd_freevars
             },
             Ast::Define(_, args, body) |
             Ast::Lambda(args, body) => {
@@ -169,7 +169,7 @@ impl Ast {
                                             parent_env);
                 bindings_free_vars.extend_from_slice(&body_freevars);
 
-                return bindings_free_vars;
+                bindings_free_vars
             },
             Ast::App(_, args) => {
                 let mut args_freevars = vec![];
@@ -180,7 +180,7 @@ impl Ast {
                     args_freevars.extend_from_slice(&arg_freevars);
                 }
 
-                return args_freevars;
+                args_freevars
             },
             _ => panic!("NYI: {:?}", self),
         }
@@ -228,7 +228,7 @@ impl Ast {
                 cnd_defines.extend_from_slice(&thn_defines);
                 cnd_defines.extend_from_slice(&els_defines);
 
-                return (converted, cnd_defines);
+                (converted, cnd_defines)
             },
             Ast::Define(name, args, body) => {
                 let mut new_args = args.clone();
@@ -246,7 +246,7 @@ impl Ast {
                                             new_args,
                                             box converted_body);
 
-                return (converted, body_defines);
+                (converted, body_defines)
 
             },
             Ast::Lambda(args, body) => {
@@ -289,7 +289,7 @@ impl Ast {
                                 box load_free_vars)
                 ]);
 
-                return (closure, new_defines);
+                (closure, new_defines)
             },
             Ast::Tuple(elts) => {
                 let mut converted_elts = vec![];
@@ -303,7 +303,7 @@ impl Ast {
                 }
 
                 let converted = Ast::Tuple(converted_elts);
-                return (converted, elts_defines);
+                (converted, elts_defines)
 
             },
             Ast::App(box Ast::Symbol(f), ref args)
@@ -320,7 +320,7 @@ impl Ast {
 
                     let converted = Ast::App(box Ast::Symbol(f.clone()),
                                              converted_args);
-                    return (converted, args_defines);
+                    (converted, args_defines)
                 },
             Ast::App(box Ast::Symbol(f), ref args)
                 if !Self::symbol_is_primitive(f) => {
@@ -352,7 +352,7 @@ impl Ast {
                                                                 vec![Ast::Symbol(f_temp),
                                                                      Ast::Number(0)]),
                                                    converted_args));
-                    return (converted, args_defines);
+                    (converted, args_defines)
                 },
             Ast::Let(bindings, body) => {
                 let mut new_bindings = vec![];
@@ -375,7 +375,7 @@ impl Ast {
 
                 let converted = Ast::Let(new_bindings,
                                          box converted_body);
-                return (converted, bindings_defines);
+                (converted, bindings_defines)
             },
             Ast::Prog(defines, main) => {
                 let mut converted_defines = vec![];
@@ -400,7 +400,7 @@ impl Ast {
                 let converted = Ast::Prog(converted_defines,
                                             box converted_main);
 
-                return (converted, vec![]);
+                (converted, vec![])
             },
             _ => panic!("NYI: {:?}", self),
         }
