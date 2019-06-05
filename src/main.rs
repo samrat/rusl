@@ -23,7 +23,8 @@ mod x86;
 use parser::Parser;
 use ast::Ast;
 use anf::flatten;
-use x86::{select_instructions, uncover_live, assign_homes};
+use x86::{select_instructions, uncover_live, assign_homes, lower_conditionals,
+          patch_instructions};
 
 fn read_input(filename: &str, mut input_buffer: &mut String)
               -> io::Result<()> {
@@ -74,4 +75,10 @@ pub fn main() {
 
     let homes_assigned = assign_homes(live_vars_uncovered);
     println!("Homes assigned: {:?}", homes_assigned);
+
+    let ifs_lowered = lower_conditionals(homes_assigned);
+    println!("Conditionals lowered: {:?}", ifs_lowered);
+
+    let patched = patch_instructions(ifs_lowered);
+    println!("Instructions patched: {:?}", patched);
 }

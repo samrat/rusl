@@ -826,3 +826,145 @@ pub fn assign_homes(prog: X86) -> X86 {
         _ => panic!("assign_homes: not top level prog"),
     }
 }
+
+fn lower_if (instr: X86) -> Vec<X86> {
+    match instr {
+        X86::If(cnd, thn, els) => {
+            let (eqp_left, eqp_right) = match *cnd {
+                x => match x {
+                    // https://github.com/rust-lang/rust/issues/16223
+                    X86::EqP(left, right) => (left, right),
+                    _ => panic!("if cond is always EqP"),
+                },
+            };
+            let thn_label = Rc::new(get_unique_varname("then"));
+            let end_label = Rc::new(get_unique_varname("endif"));
+
+            let mut new_elss = vec![];
+            for i in els {
+                new_elss.extend_from_slice(&lower_if(i));
+            }
+            let mut new_thns = vec![];
+            for i in thn {
+                new_thns.extend_from_slice(&lower_if(i));
+            }
+
+            let mut if_instrs = vec![
+                X86::Cmp(eqp_left, eqp_right),
+                X86::JmpIf(CC::E, thn_label.clone()),
+            ];
+            if_instrs.append(&mut new_elss);
+            if_instrs.extend_from_slice(&[
+                X86::Jmp(end_label.clone()),
+                X86::Label(thn_label),
+            ]);
+            if_instrs.append(&mut new_thns);
+            if_instrs.extend_from_slice(&[
+                X86::Label(end_label),
+            ]);
+
+            return if_instrs;
+        },
+        _ => vec![instr],
+    }
+}
+
+/// Convert If's in pseudo-x86 to x86 jumps
+pub fn lower_conditionals(prog: X86) -> X86 {
+    match prog {
+        X86::DefineWithStackSize(name, stack_size, mut instrs) => {
+            instrs = instrs.iter().flat_map(|i| lower_if(i.clone())).collect();
+
+            return X86::DefineWithStackSize(name, stack_size, instrs);
+        },
+        X86::ProgWithStackSize(mut defs, mut instrs, stack_size) => {
+            instrs = instrs.iter().flat_map(|i| lower_if(i.clone())).collect();
+            defs = defs.iter().map(|d| lower_conditionals(d.clone())).collect();
+
+            return X86::ProgWithStackSize(defs, instrs, stack_size);
+        }
+        _ => panic!("lower_conditionals: not top-level Prog"),
+    }
+}
+
+
+fn patch_single_instr(instr: X86) -> Vec<X86> {
+    match instr {
+        // src and dest of Mov are same
+        X86::Mov(ref dest, ref src) if src == dest => {
+            vec![]
+        },
+        // both source and dest are indirect addresses
+        X86::Mov(X86Arg::RegOffset(dest_reg, dest),
+                 X86Arg::RegOffset(src_reg, src)) => {
+            vec![X86::Mov(X86Arg::Reg(Reg::RAX),
+                          X86Arg::RegOffset(src_reg, src)),
+                 X86::Mov(X86Arg::RegOffset(dest_reg, dest),
+                          X86Arg::Reg(Reg::RAX))]
+        },
+        X86::Mov(X86Arg::RegOffset(dest_reg, dest),
+                 X86Arg::FuncName(f)) => {
+            vec![X86::Mov(X86Arg::Reg(Reg::RAX),
+                          X86Arg::FuncName(f)),
+                 X86::Mov(X86Arg::RegOffset(dest_reg, dest),
+                          X86Arg::Reg(Reg::RAX))]
+        },
+        X86::MovZx(X86Arg::RegOffset(dest_reg, offset),
+                   src) => {
+            vec![X86::MovZx(X86Arg::Reg(Reg::RAX), src),
+                 X86::Mov(X86Arg::RegOffset(dest_reg, offset),
+                          X86Arg::Reg(Reg::RAX))]
+        },
+        // both source and dest are indirect addresses
+        X86::Add(X86Arg::RegOffset(dest_reg, dest),
+                 X86Arg::RegOffset(src_reg, src)) => {
+            vec![X86::Mov(X86Arg::Reg(Reg::RAX),
+                          X86Arg::RegOffset(dest_reg.clone(), dest)),
+                 X86::Add(X86Arg::Reg(Reg::RAX),
+                          X86Arg::RegOffset(src_reg, src)),
+                 X86::Mov(X86Arg::RegOffset(dest_reg, dest),
+                          X86Arg::Reg(Reg::RAX))
+            ]
+        },
+        X86::Neg(X86Arg::RegOffset(reg, offset)) => {
+            vec![X86::Mov(X86Arg::Reg(Reg::RAX),
+                          X86Arg::RegOffset(reg.clone(), offset)),
+                 X86::Neg(X86Arg::Reg(Reg::RAX)),
+                 X86::Mov(X86Arg::RegOffset(reg, offset),
+                          X86Arg::Reg(Reg::RAX))]
+        },
+        // cmp can't take imm64
+        X86::Cmp(X86Arg::Imm(i), right) => {
+            vec![X86::Mov(X86Arg::Reg(Reg::RDX), X86Arg::Imm(i)),
+                 X86::Cmp(X86Arg::Reg(Reg::RDX), right)]
+        },
+        X86::Cmp(left, X86Arg::Imm(i)) => {
+            vec![X86::Mov(X86Arg::Reg(Reg::RDX), X86Arg::Imm(i)),
+                 X86::Cmp(left, X86Arg::Reg(Reg::RDX))]
+        },
+        _ => vec![instr],
+    }
+}
+
+/// Fix x86 instructions(eg. moves between two indirect addresses, etc)
+pub fn patch_instructions(prog: X86) -> X86 {
+    match prog {
+        X86::DefineWithStackSize(name, stack_size, instrs) => {
+            let patched_instrs =
+                instrs.iter().flat_map(|i| patch_single_instr(i.clone())).collect();
+
+            return X86::DefineWithStackSize(name,
+                                            stack_size,
+                                            patched_instrs);
+        },
+        X86::ProgWithStackSize(mut defs, instrs, stack_size) => {
+            let patched_instrs =
+                instrs.iter().flat_map(|i| patch_single_instr(i.clone())).collect();
+
+            defs = defs.iter().map(|d| patch_instructions(d.clone())).collect();
+
+            return X86::ProgWithStackSize(defs, patched_instrs, stack_size);
+        },
+        _ => panic!("patch_instructions: not top-level Prog"),
+    }
+}
