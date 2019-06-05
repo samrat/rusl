@@ -19,12 +19,14 @@ mod ast;
 mod parser;
 mod anf;
 mod x86;
+mod emit;
 
 use parser::Parser;
 use ast::Ast;
 use anf::flatten;
 use x86::{select_instructions, uncover_live, assign_homes, lower_conditionals,
           patch_instructions};
+use emit::print_x86;
 
 fn read_input(filename: &str, mut input_buffer: &mut String)
               -> io::Result<()> {
@@ -49,36 +51,38 @@ pub fn main() {
         uniquify_mapping.insert(Rc::new(prim.to_string()), Rc::new(prim.to_string()));
     }
 
-    println!("{:?}", toplevel);
+    // println!("{:?}", toplevel);
 
     let uniquified = Ast::Prog(toplevel[..toplevel.len()-1].to_vec(),
                        Box::new(toplevel[toplevel.len()-1].clone()))
              .uniquify(&mut uniquify_mapping);
-    println!("Uniquify: {:?}",
-             uniquified);
+    // println!("Uniquify: {:?}",
+    //          uniquified);
 
     let (closures_converted, _) = uniquified
         .convert_to_closures(&HashSet::new(),
                              &HashSet::new());
 
-    println!("Closures converted: {:?}",
-             closures_converted);
+    // println!("Closures converted: {:?}",
+    //          closures_converted);
 
     let flattened = flatten(&closures_converted);
-    println!("Flattened: {:?}", flattened);
+    // println!("Flattened: {:?}", flattened);
 
     let pseudo_x86 = select_instructions(flattened);
-    println!("Pseudo-X86: {:?}", pseudo_x86);
+    // println!("Pseudo-X86: {:?}", pseudo_x86);
 
     let live_vars_uncovered = uncover_live(pseudo_x86);
-    println!("Live vars uncovered: {:?}", live_vars_uncovered);
+    // println!("Live vars uncovered: {:?}", live_vars_uncovered);
 
     let homes_assigned = assign_homes(live_vars_uncovered);
-    println!("Homes assigned: {:?}", homes_assigned);
+    // println!("Homes assigned: {:?}", homes_assigned);
 
     let ifs_lowered = lower_conditionals(homes_assigned);
-    println!("Conditionals lowered: {:?}", ifs_lowered);
+    // println!("Conditionals lowered: {:?}", ifs_lowered);
 
     let patched = patch_instructions(ifs_lowered);
-    println!("Instructions patched: {:?}", patched);
+    // println!("Instructions patched: {:?}", patched);
+
+    println!("{}", print_x86(patched));
 }

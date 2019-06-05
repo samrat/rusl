@@ -6,7 +6,7 @@ use anf::{Flat, FlatResult};
 use util::get_unique_varname;
 
 #[derive(Debug, Clone, PartialEq, Hash, Eq)]
-enum Reg {
+pub enum Reg {
     AL,
 
     RAX, RBX, RBP, RCX, RDX, RDI, RSI,
@@ -14,7 +14,7 @@ enum Reg {
 }
 
 #[derive(Debug, Clone, Eq, Hash, PartialEq)]
-enum X86Arg {
+pub enum X86Arg {
     Reg(Reg),
     Imm(u64),
     RegOffset(Reg, i64),
@@ -86,15 +86,15 @@ const CONST_TRUE : u64  = 0xffffffffffffffff;
 const CONST_FALSE : u64 = 0x7fffffffffffffff;
 
 // R11 is used to point to heap
-const CALLEE_SAVE_REGS : [Reg;5] =
+pub const CALLEE_SAVE_REGS : [Reg;5] =
     [Reg::RBX, Reg::R12, Reg::R13, Reg::R14, Reg::R15
     ];
-const CALLER_SAVE_REGS : [Reg;7] =
+pub const CALLER_SAVE_REGS : [Reg;7] =
     [Reg::RDX, Reg::RCX, Reg::RSI, Reg::RDI,
      Reg::R8, Reg::R9, Reg::R10, // Reg::R11
     ];
 // order of registers in which to place first 6 arguments
-const ARG_REG_ORDER : [Reg; 6] = [Reg::RDI,
+pub const ARG_REG_ORDER : [Reg; 6] = [Reg::RDI,
                                   Reg::RSI,
                                   Reg::RDX,
                                   Reg::RCX,
