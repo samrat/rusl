@@ -23,7 +23,7 @@ mod x86;
 use parser::Parser;
 use ast::Ast;
 use anf::flatten;
-use x86::select_instructions;
+use x86::{select_instructions, uncover_live};
 
 fn read_input(filename: &str, mut input_buffer: &mut String)
               -> io::Result<()> {
@@ -66,5 +66,9 @@ pub fn main() {
     let flattened = flatten(&closures_converted);
     println!("Flattened: {:?}", flattened);
 
-    println!("Pseudo-X86: {:?}", select_instructions(flattened));
+    let pseudo_x86 = select_instructions(flattened);
+    println!("Pseudo-X86: {:?}", pseudo_x86);
+
+    let live_vars_uncovered = uncover_live(pseudo_x86);
+    println!("Live vars uncovered: {:?}", live_vars_uncovered);
 }

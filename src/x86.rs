@@ -427,3 +427,181 @@ pub fn select_instructions(flat_prog: FlatResult) -> X86 {
         _ => panic!("flat_prog is not a top-level Prog"),
     }
 }
+
+/// For an instruction, returns a 3-tuple:
+/// (variables used in instruction, variables read, variables written to)
+fn instruction_rw(instr: X86) -> (Vec<Rc<String>>, Vec<Rc<String>>, Vec<Rc<String>>) {
+    match instr {
+        X86::Mov(X86Arg::Var(dest), X86Arg::Var(src)) => {
+            return (vec![dest.clone(), src.clone()],
+                    vec![src],
+                    vec![dest]);
+        },
+        X86::Mov(X86Arg::Var(dest), _) => {
+            return (vec![dest.clone()],
+                    vec![],
+                    vec![dest]);
+        },
+        X86::Mov(X86Arg::Reg(_), X86Arg::Var(src)) => {
+            return (vec![src.clone()],
+                    vec![src],
+                    vec![]);
+        },
+        X86::Mov(X86Arg::RegOffset(_, _), X86Arg::Var(src)) => {
+            return (vec![src.clone()],
+                    vec![src],
+                    vec![]);
+        },
+        X86::Mov(_, _) => {
+            return (vec![], vec![], vec![]);
+        },
+        X86::MovZx(_, _) => {
+            return (vec![], vec![], vec![]);
+        },
+        X86::Set(_, _) =>  {
+            return (vec![], vec![], vec![]);
+        },
+
+        X86::Cmp(left, right) => {
+            match (left, right) {
+                (X86Arg::Var(l), X86Arg::Var(r)) => (vec![l.clone(),
+                                                          r.clone()],
+                                                     vec![l, r],
+                                                     vec![]),
+                (X86Arg::Var(l), _) => (vec![l.clone()],
+                                        vec![l],
+                                        vec![]),
+                (_, X86Arg::Var(r)) => (vec![r.clone()],
+                                        vec![r],
+                                        vec![]),
+                (_, _) => (vec![], vec![], vec![]),
+            }
+        },
+        X86::Sub(X86Arg::Var(dest), X86Arg::Var(src)) |
+        X86::Add(X86Arg::Var(dest), X86Arg::Var(src)) => {
+            return (vec![dest.clone(), src.clone()],
+                    vec![dest.clone(), src],
+                    vec![dest]);
+        },
+        X86::And(X86Arg::Var(dest), X86Arg::Var(src)) => {
+            return (vec![dest.clone(), src.clone()],
+                    vec![dest.clone(), src],
+                    vec![dest]);
+        },
+        X86::Sub(X86Arg::Var(dest), _) |
+        X86::Add(X86Arg::Var(dest), _) => {
+            return (vec![dest.clone()],
+                    vec![dest.clone()],
+                    vec![dest]);
+        },
+        X86::And(X86Arg::Var(dest), _) => {
+            return (vec![dest.clone()],
+                    vec![dest.clone()],
+                    vec![dest]);
+        },
+        X86::Neg(X86Arg::Var(n)) => {
+            return (vec![n.clone()],
+                    vec![n.clone()],
+                    vec![n.clone()]);
+        },
+        X86::Sub(X86Arg::Reg(_), X86Arg::Imm(_)) |
+        X86::Add(X86Arg::GlobalVal(_), X86Arg::Imm(_)) |
+        X86::And(X86Arg::Reg(_), X86Arg::Imm(_)) |
+        X86::Push(_) | X86::Pop(_) | X86::Call(_) | X86::Jne(_) | X86::Je(_) |
+        X86::Label(_) | X86::Jmp(_) =>
+            return (vec![], vec![], vec![]),
+        _ => panic!("NYI: {:?}", instr),
+    }
+}
+
+
+/// Find live variables during each instruction. For `if`s, the live
+/// sets are embedded in the new list of instructions
+fn get_live_after_sets(mut instrs: Vec<X86>, lives: HashSet<Rc<String>>)
+                   -> (HashSet<Rc<String>>, Vec<HashSet<Rc<String>>>, Vec<X86>) {
+    let mut live_of_next = lives.clone();
+    let mut live_after_sets = vec![];
+    let mut new_instrs = vec![];
+
+    instrs.reverse();
+    for instr in instrs {
+        match instr {
+            X86::If(cnd, thns, elss) => {
+                let (thn_lives, thn_live_sets, new_thns) =
+                    get_live_after_sets(thns.clone(), live_of_next.clone());
+                let (els_lives, els_live_sets, new_elss) =
+                    get_live_after_sets(elss.clone(), live_of_next.clone());
+                let cond_vars = match *cnd.clone() {
+                    x => match x {
+                        // https://github.com/rust-lang/rust/issues/16223
+                        X86::EqP(left, right) => {
+                            match (left, right) {
+                                (X86Arg::Var(l), X86Arg::Var(r)) => vec![l, r],
+                                (X86Arg::Var(l), _) => vec![l],
+                                (_, X86Arg::Var(r)) => vec![r],
+                                _ => vec![],
+                            }
+                        },
+                        _ => panic!("if cond needs to be EqP"),
+                    }
+                };
+
+                let cond_vars : HashSet<_> = cond_vars.iter().cloned().collect();
+
+                let mut live = lives.clone();
+                live = live.union(&lives).cloned().collect();
+                live = live.union(&cond_vars).cloned().collect();
+                live = live.union(&thn_lives).cloned().collect();
+                live = live.union(&els_lives).cloned().collect();
+
+                live_of_next = live.clone();
+                live_after_sets.push(live);
+
+                new_instrs.push(X86::IfWithLives(
+                    cnd,
+                    new_thns, thn_live_sets,
+                    new_elss, els_live_sets));
+            },
+
+            _ => {
+                let (_, read_vars, written_vars) =
+                    instruction_rw(instr.clone());
+                let mut live = live_of_next.clone();
+                let written_vars_set : HashSet<_> =
+                    written_vars.iter().cloned().collect();
+                live = live.difference(&written_vars_set).cloned().collect();
+                let read_vars_set : HashSet<_> = read_vars.iter().cloned().collect();
+                live = live.union(&read_vars_set).cloned().collect();
+
+                live_of_next = live.clone();
+                live_after_sets.push(live);
+                new_instrs.push(instr);
+            },
+        }
+    };
+
+    live_after_sets.reverse();
+    new_instrs.reverse();
+    return (live_of_next, live_after_sets, new_instrs);
+}
+
+pub fn uncover_live(prog: X86) -> X86 {
+    match prog {
+        X86::Define(name, vars, instrs) => {
+            let (_, live_sets, new_instrs) = get_live_after_sets(instrs, HashSet::new());
+            return X86::DefineWithLives(name, vars, live_sets, new_instrs);
+        },
+
+        X86::Prog(mut defs, instrs, vars) => {
+            let (_, live_sets, new_instrs) = get_live_after_sets(instrs, HashSet::new());
+
+            defs = defs.iter().map(|def| uncover_live(def.clone())).collect();
+            return X86::ProgWithLives(defs,
+                                      new_instrs,
+                                      vars,
+                                      live_sets);
+        },
+        _ => panic!("prog is not a top-level Prog"),
+    }
+}
+
