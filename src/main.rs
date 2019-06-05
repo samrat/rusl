@@ -23,7 +23,7 @@ mod x86;
 use parser::Parser;
 use ast::Ast;
 use anf::flatten;
-use x86::{select_instructions, uncover_live};
+use x86::{select_instructions, uncover_live, assign_homes};
 
 fn read_input(filename: &str, mut input_buffer: &mut String)
               -> io::Result<()> {
@@ -71,4 +71,7 @@ pub fn main() {
 
     let live_vars_uncovered = uncover_live(pseudo_x86);
     println!("Live vars uncovered: {:?}", live_vars_uncovered);
+
+    let homes_assigned = assign_homes(live_vars_uncovered);
+    println!("Homes assigned: {:?}", homes_assigned);
 }

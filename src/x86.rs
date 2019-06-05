@@ -1,5 +1,5 @@
 use std::rc::Rc;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use ast::CC;
 use anf::{Flat, FlatResult};
@@ -605,3 +605,224 @@ pub fn uncover_live(prog: X86) -> X86 {
     }
 }
 
+/// For each variable, figure out the interval when it is live. Results
+/// are inserted into live_intervals.
+fn compute_live_intervals(instrs: Vec<X86>, live_sets: Vec<HashSet<Rc<String>>>,
+                          live_intervals: &mut HashMap<Rc<String>, (i32, i32)>,
+                          init_line_num: i32) {
+    let mut line_num = init_line_num;
+    let instr_live_sets : Vec<_> = instrs.iter().zip(live_sets).collect();
+    for (instr, live_set) in instr_live_sets {
+        match (instr.clone(), live_set.clone()) {
+            (X86::IfWithLives(_, thns, thn_lives,
+                              elss, els_lives), _) => {
+                compute_live_intervals(thns.clone(), thn_lives, live_intervals, line_num);
+                compute_live_intervals(elss.clone(), els_lives, live_intervals, line_num);
+                line_num = line_num + thns.len() as i32 + elss.len() as i32;
+            },
+            (_, _) => {
+                for v in live_set {
+                    match live_intervals.get(&v) {
+                        Some(&(start, _)) => {
+                            live_intervals.insert(v, (start, line_num));
+                        },
+                        None => {
+                            live_intervals.insert(v, (line_num-1, line_num));
+                        },
+                    }
+                }
+                line_num = line_num + 1;
+            },
+        }
+    }
+}
+
+/// Allocate registers for variables. If it can't find a free
+/// register, the variable won't be present as a key in the returned
+/// hash-map
+fn allocate_registers(live_intervals: HashMap<Rc<String>, (i32, i32)>)
+                      -> HashMap<Rc<String>, i32> {
+    let mut live_intervals_vec = vec![];
+    for (v, live_interval) in live_intervals {
+        live_intervals_vec.push((v, live_interval));
+    }
+    live_intervals_vec.sort_by_key(|interval| (interval.clone().1).0);
+
+    let mut mapping : HashMap<Rc<String>, i32> = HashMap::new();
+    let mut free : Vec<i32> = (0..REGS.len()).map(|i| i as i32).collect();
+    let mut active_intervals : HashSet<(Rc<String>, (i32, i32))> = HashSet::new();
+    for (v, (start, end)) in live_intervals_vec {
+        // clear done intervals from active_intervals, and free
+        // registers allocated to them
+        for (a, (astart, aend)) in active_intervals.clone() {
+            if aend < start {
+                active_intervals.remove(&(a.clone(), (astart, aend)));
+                match mapping.get(&a.to_string()) {
+                    Some(reg) => {
+                        free.push(reg.clone());
+                    },
+                    None => (),
+                }
+            }
+        }
+
+        // allocate free register, if any.
+        if free.len() > 0 {
+            mapping.insert(v.clone(), free.pop().unwrap());
+        }
+
+        // add current to active_intervals
+        active_intervals.insert((v.clone(), (start, end)));
+    }
+    return mapping;
+}
+
+fn assign_homes_to_op2(locs: &HashMap<Rc<String>, X86Arg>,
+                       dest: X86Arg, src: X86Arg) -> (X86Arg, X86Arg) {
+    match (dest.clone(), src.clone()) {
+        (X86Arg::Var(d), X86Arg::Var(s)) =>
+            (locs.get(&d).unwrap().clone(),
+             locs.get(&s).unwrap().clone()),
+        (X86Arg::Var(d), _) => {
+            (locs.get(&d).unwrap().clone(),
+             src)
+        },
+        (_, X86Arg::Var(s)) =>
+            (dest, locs.get(&s).unwrap().clone()),
+        (_, X86Arg::FuncName(_)) => {
+            (dest, src)
+        },
+        (X86Arg::RegOffset(_, _), X86Arg::Imm(_)) |
+        (X86Arg::GlobalVal(_), X86Arg::Imm(_)) |
+        (X86Arg::Imm(_), X86Arg::Imm(_)) |
+        (X86Arg::Reg(_), _) |
+        (X86Arg::RegOffset(_, _), X86Arg::GlobalVal(_))=>
+            (dest, src),
+        _ => panic!("unreachable: {:?}", (dest, src)),
+    }
+}
+
+/// Given a list of instructions and mapping from vars to
+/// "homes"(register/stack location), return a new list of
+/// instructions with vars replaced with their assigned homes.
+fn assign_homes_to_instrs(instrs: Vec<X86>, locs: HashMap<Rc<String>, X86Arg>) -> Vec<X86> {
+    let mut new_instrs = vec![];
+    for i in instrs {
+        match i {
+            X86::IfWithLives(cnd, thn, _, els, _) => {
+                let new_cnd = match *cnd {
+                    x => match x {
+                        // https://github.com/rust-lang/rust/issues/16223
+                        X86::EqP(left, right) => {
+                        let new_left = match left {
+                            X86Arg::Var(v) => locs.get(&v).unwrap().clone(),
+                            _ => left,
+                        };
+                        X86::EqP(new_left, right)
+                        },
+                        _ => panic!("if cond should be an EqP"),
+                    },
+                };
+                let new_thn = assign_homes_to_instrs(thn, locs.clone());
+                let new_els = assign_homes_to_instrs(els, locs.clone());
+                new_instrs.push(
+                    X86::If(Box::new(new_cnd), new_thn, new_els)
+                );
+            },
+            X86::Mov(dest, src) => {
+                let (new_dest, new_src) = assign_homes_to_op2(&locs, dest, src);
+                new_instrs.push(X86::Mov(new_dest, new_src))
+            },
+            X86::MovZx(dest, src) => {
+                let (new_dest, new_src) = assign_homes_to_op2(&locs, dest, src);
+                new_instrs.push(X86::MovZx(new_dest, new_src))
+            },
+            X86::Add(dest, src) => {
+                let (new_dest, new_src) = assign_homes_to_op2(&locs, dest, src);
+                new_instrs.push(X86::Add(new_dest, new_src))
+            },
+            X86::And(dest, src) => {
+                let (new_dest, new_src) = assign_homes_to_op2(&locs, dest, src);
+                new_instrs.push(X86::And(new_dest, new_src))
+            },
+            X86::Cmp(left, right) => {
+                let (new_left, new_right) =
+                    assign_homes_to_op2(&locs, left, right);
+                new_instrs.push(X86::Cmp(new_left, new_right))
+            },
+            X86::Neg(n) => {
+                let new_n = match n {
+                    X86Arg::Var(v) => locs.get(&v).unwrap().clone(),
+                    _ => n,
+                };
+
+                new_instrs.push(X86::Neg(new_n))
+            }
+            X86::Call(X86Arg::FuncName(ref fname)) => {
+                match locs.get(&fname.clone()) {
+                    Some(home) => {
+                        new_instrs.push(X86::Call(home.clone()))
+                    },
+                    _ => new_instrs.push(i.clone()),
+                }
+            },
+            X86::Set(X86Arg::Reg(_), _) |
+            X86::Push(_) | X86::Pop(_) |
+            X86::Sub(X86Arg::Reg(_), X86Arg::Imm(_)) |
+            X86::Jmp(_) | X86::Jne(_) | X86::Je(_) | X86::Label(_)
+                => {
+                new_instrs.push(i);
+            },
+            _ => panic!("NYI: {:?}", i),
+        }
+    };
+
+    return new_instrs;
+}
+
+fn decide_locs(vars: &Vec<Rc<String>>, instrs: &Vec<X86>,
+               live_sets: Vec<HashSet<Rc<String>>>)
+               -> (HashMap<Rc<String>, X86Arg>, i64) {
+    let mut live_intervals = HashMap::new();
+    compute_live_intervals(instrs.clone(),
+                           live_sets,
+                           &mut live_intervals, 1);
+    let reg_alloc = allocate_registers(live_intervals);
+    let mut locs = HashMap::new();
+    let mut stack_size = 0;
+    for var in vars {
+        locs.insert(
+            var.clone(),
+            match reg_alloc.get(&var.to_string()) {
+                Some(reg) => X86Arg::Reg(REGS[reg.clone() as usize].clone()),
+                None => {
+                    stack_size += 1;
+                    X86Arg::RegOffset(Reg::RBP, stack_size * -8)
+                },
+            }
+        );
+    };
+
+    return (locs, stack_size);
+}
+
+pub fn assign_homes(prog: X86) -> X86 {
+    match prog {
+        X86::DefineWithLives(name, vars, live_sets, instrs) => {
+            let (locs, stack_size) = decide_locs(&vars, &instrs, live_sets);
+            return X86::DefineWithStackSize(name, stack_size,
+                                            assign_homes_to_instrs(instrs, locs));
+        },
+
+        X86::ProgWithLives(defs, instrs, vars, live_sets) => {
+            let (locs, stack_size) = decide_locs(&vars, &instrs, live_sets);
+            let mut new_defs = vec![];
+            for def in defs {
+                new_defs.push(assign_homes(def));
+            }
+
+            return X86::ProgWithStackSize(new_defs, assign_homes_to_instrs(instrs, locs), stack_size);
+        },
+        _ => panic!("assign_homes: not top level prog"),
+    }
+}
