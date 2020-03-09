@@ -113,7 +113,7 @@ impl<'input> Parser<'input> {
                             Ast::Lambda(Parser::get_arg_names(&args),
                                         Box::new(Parser::get_ast(body)))
                         },
-                    [Ast::Symbol(k), _..]
+                    [Ast::Symbol(k), ..]
                         if &k[..] == "tuple" => {
                             let tuple_elts = elts[1..].iter()
                             // TODO: move?
@@ -138,7 +138,7 @@ impl<'input> Parser<'input> {
                                      Box::new(Parser::get_ast(left)),
                                      Box::new(Parser::get_ast(right)))
                         },
-                    [f, _..] => {
+                    [f, ..] => {
                         let args = elts[1..].iter().map(|e| Parser::get_ast(e)) // TODO: move
                             .collect();
 
