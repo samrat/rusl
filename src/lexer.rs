@@ -135,6 +135,3 @@ impl<'input> Iterator for Lexer<'input> {
         }
     }
 }
-
-fn main() {
-}

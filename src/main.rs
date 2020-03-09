@@ -1,4 +1,3 @@
-#![feature(slice_patterns)]
 #![feature(box_syntax, box_patterns)]
 
 use std::io;
@@ -26,8 +25,8 @@ use emit::print_x86;
 
 fn read_input(filename: &str, mut input_buffer: &mut String)
               -> io::Result<()> {
-    let mut f = try!(File::open(filename));
-    try!(f.read_to_string(&mut input_buffer));
+    let mut f = File::open(filename)?;
+    f.read_to_string(&mut input_buffer)?;
     Ok(())
 }
 pub fn main() {
