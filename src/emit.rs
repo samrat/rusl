@@ -4,22 +4,22 @@ use ast::CC;
 
 fn display_reg(reg: &Reg) -> String {
     match reg {
-        &Reg::AL => "al",
-        &Reg::RAX => "rax",
-        &Reg::RBX => "rbx",
-        &Reg::RBP => "rbp",
-        &Reg::RDX => "rdx",
-        &Reg::RCX => "rcx",
-        &Reg::RDI => "rdi",
-        &Reg::RSI => "rsi",
-        &Reg::R8 => "r8",
-        &Reg::R9 => "r9",
-        &Reg::R10 => "r10",
-        &Reg::R11 => "r11",
-        &Reg::R12 => "r12",
-        &Reg::R13 => "r13",
-        &Reg::R14 => "r14",
-        &Reg::R15 => "r15",
+        Reg::AL => "al",
+        Reg::RAX => "rax",
+        Reg::RBX => "rbx",
+        Reg::RBP => "rbp",
+        Reg::RDX => "rdx",
+        Reg::RCX => "rcx",
+        Reg::RDI => "rdi",
+        Reg::RSI => "rsi",
+        Reg::R8 => "r8",
+        Reg::R9 => "r9",
+        Reg::R10 => "r10",
+        Reg::R11 => "r11",
+        Reg::R12 => "r12",
+        Reg::R13 => "r13",
+        Reg::R14 => "r14",
+        Reg::R15 => "r15",
     }.to_string()
 }
 
@@ -124,7 +124,7 @@ pub fn print_x86(prog: X86) -> String {
     pop rbp
     ret\n", restore_callee_save_regs, stack_size,);
 
-            let mut instrs_str = String::from(prelude);
+            let mut instrs_str = prelude;
             for i in instrs {
                 instrs_str.push_str(&print_instr(i));
             }
@@ -168,7 +168,7 @@ internal_error_non_bool:
 internal_error_non_tuple:
     call error_not_tuple
 \n", restore_callee_save_regs, stack_size);
-            let mut instrs_str = String::from(prelude);
+            let mut instrs_str = prelude;
             for i in instrs {
                 instrs_str.push_str(&print_instr(i));
             }

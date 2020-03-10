@@ -86,7 +86,7 @@ impl Ast {
                     mapping.insert(arg.clone(), new_arg.clone());
                 }
 
-                Ast::Define(uniq_fname.clone(),
+                Ast::Define(uniq_fname,
                             new_args,
                             box val.uniquify(mapping))
             },
@@ -145,7 +145,7 @@ impl Ast {
                 new_parent_env = new_parent_env
                     .union(&parent_env).cloned().collect();
 
-                let new_env : HashSet<Rc<String>> = args.iter().map(|a| a.clone()).collect();
+                let new_env : HashSet<Rc<String>> = args.iter().cloned().collect();
 
                 println!("[lambda] new_env: {:?} new_parent_env: {:?}",
                          new_env,

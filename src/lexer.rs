@@ -42,7 +42,7 @@ impl<'input> Lexer<'input> {
     pub fn get_token(&mut self) -> Token<'input> {
         if let Some(tok) = self.tok_buf.clone() {
             self.tok_buf = None;
-            return tok;
+            tok
         }
         else {
             let mut iter = self.s[self.pos..].chars().peekable();
@@ -90,7 +90,7 @@ impl<'input> Lexer<'input> {
                             self.col += 1;
                             while let Some(c) = iter.next() {
                                 self.pos += 1;
-                                if c.clone() == '\n' {
+                                if c == '\n' {
                                     break;
                                 }
                             }
@@ -120,7 +120,8 @@ impl<'input> Lexer<'input> {
                     }
                 }
             }
-            return Token::EOF;
+
+            Token::EOF
         }
     }
 }

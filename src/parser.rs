@@ -71,7 +71,7 @@ impl<'input> Parser<'input> {
                             if let Ast::Symbol(name) = name {
                                 Ast::Define(name.clone(),
                                             Parser::get_arg_names(args),
-                                            Box::new(Parser::get_ast(body)))
+                                            box Parser::get_ast(body))
                             } else {
                                 panic!("invalid function prototype");
                             }

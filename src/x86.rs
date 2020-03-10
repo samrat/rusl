@@ -121,9 +121,10 @@ fn flat_arg_type(v: &Flat) -> X86Arg {
         &Flat::FuncName(ref name) => X86Arg::FuncName(name.clone()),
         &Flat::Number(n) => X86Arg::Imm((n << 1) as u64),
         &Flat::Bool(b) => {
-            match b {
-                true => X86Arg::Imm(CONST_TRUE),
-                false => X86Arg::Imm(CONST_FALSE),
+            if b {
+                X86Arg::Imm(CONST_TRUE)
+            } else {
+                X86Arg::Imm(CONST_FALSE)
             }
         },
         &_ => {
@@ -156,7 +157,7 @@ fn ensure_bool(a: X86Arg) -> Vec<X86> {
          X86::Mov(X86Arg::Reg(Reg::RCX), a),
          X86::And(X86Arg::Reg(Reg::RCX), X86Arg::Imm(2)),
          X86::Cmp(X86Arg::Reg(Reg::RCX), X86Arg::Imm(0)),
-         X86::Je(error_label.clone()),
+         X86::Je(error_label),
          X86::Pop(Reg::RCX)]
 }
 
@@ -218,7 +219,7 @@ fn flat_to_px86(instr: Flat) -> Vec<X86> {
                             },
                             "-" => {
                                 let arg = match &args[..] {
-                                    &[ref arg] => arg,
+                                    [ref arg] => arg,
                                     _ => {
                                         panic!("`-` expects 1 argument");
                                     },
@@ -226,13 +227,13 @@ fn flat_to_px86(instr: Flat) -> Vec<X86> {
                                 let mut ret = vec![X86::Mov(X86Arg::Var(dest.clone()),
                                                             flat_arg_type(arg))];
                                 ret.extend_from_slice(&ensure_number(flat_arg_type(arg)));
-                                ret.push(X86::Neg(X86Arg::Var(dest.clone())));
+                                ret.push(X86::Neg(X86Arg::Var(dest)));
                                 
                                 ret
                             },
                             "tuple-ref" => {
                                 let (tuple, index) = match &args[..] {
-                                    &[ref tuple, ref index] => (tuple, index),
+                                    [ref tuple, ref index] => (tuple, index),
                                     _ => {
                                         panic!("`tuple-ref` expects 2 arguments");
                                     },
@@ -318,7 +319,7 @@ fn flat_to_px86(instr: Flat) -> Vec<X86> {
                         let mut instrs =
                             vec![X86::Mov(X86Arg::Var(dest.clone()),
                                           X86Arg::GlobalVal(free_ptr_str.clone())),
-                                 X86::Add(X86Arg::GlobalVal(free_ptr_str.clone()),
+                                 X86::Add(X86Arg::GlobalVal(free_ptr_str),
                                           X86Arg::Imm(total_len as u64)),
                                  X86::Mov(X86Arg::Reg(Reg::R11),
                                           X86Arg::Var(dest.clone()))];
@@ -503,7 +504,7 @@ fn instruction_rw(instr: X86) -> (Vec<Rc<String>>, Vec<Rc<String>>, Vec<Rc<Strin
         X86::Neg(X86Arg::Var(n)) => {
             (vec![n.clone()],
              vec![n.clone()],
-             vec![n.clone()])
+             vec![n])
         },
         X86::Sub(X86Arg::Reg(_), X86Arg::Imm(_)) |
         X86::Add(X86Arg::GlobalVal(_), X86Arg::Imm(_)) |
@@ -608,7 +609,7 @@ pub fn uncover_live(prog: X86) -> X86 {
 
 /// For each variable, figure out the interval when it is live. Results
 /// are inserted into live_intervals.
-fn compute_live_intervals(instrs: Vec<X86>, live_sets: Vec<HashSet<Rc<String>>>,
+fn compute_live_intervals(instrs: &[X86], live_sets: Vec<HashSet<Rc<String>>>,
                           live_intervals: &mut HashMap<Rc<String>, (i32, i32)>,
                           init_line_num: i32) {
     let mut line_num = init_line_num;
@@ -617,8 +618,8 @@ fn compute_live_intervals(instrs: Vec<X86>, live_sets: Vec<HashSet<Rc<String>>>,
         match (instr.clone(), live_set.clone()) {
             (X86::IfWithLives(_, thns, thn_lives,
                               elss, els_lives), _) => {
-                compute_live_intervals(thns.clone(), thn_lives, live_intervals, line_num);
-                compute_live_intervals(elss.clone(), els_lives, live_intervals, line_num);
+                compute_live_intervals(&thns, thn_lives, live_intervals, line_num);
+                compute_live_intervals(&elss, els_lives, live_intervals, line_num);
                 line_num = line_num + thns.len() as i32 + elss.len() as i32;
             },
             (_, _) => {
@@ -632,7 +633,7 @@ fn compute_live_intervals(instrs: Vec<X86>, live_sets: Vec<HashSet<Rc<String>>>,
                         },
                     }
                 }
-                line_num = line_num + 1;
+                line_num += 1;
             },
         }
     }
@@ -658,17 +659,14 @@ fn allocate_registers(live_intervals: HashMap<Rc<String>, (i32, i32)>)
         for (a, (astart, aend)) in active_intervals.clone() {
             if aend < start {
                 active_intervals.remove(&(a.clone(), (astart, aend)));
-                match mapping.get(&a.to_string()) {
-                    Some(reg) => {
-                        free.push(reg.clone());
-                    },
-                    None => (),
+                if let Some(reg) = mapping.get(&a.to_string()) {
+                    free.push(reg.clone());
                 }
             }
         }
 
         // allocate free register, if any.
-        if free.len() > 0 {
+        if !free.is_empty() {
             mapping.insert(v.clone(), free.pop().unwrap());
         }
 
@@ -781,11 +779,11 @@ fn assign_homes_to_instrs(instrs: Vec<X86>, locs: HashMap<Rc<String>, X86Arg>) -
     new_instrs
 }
 
-fn decide_locs(vars: &Vec<Rc<String>>, instrs: &Vec<X86>,
+fn decide_locs(vars: &[Rc<String>], instrs: &[X86],
                live_sets: Vec<HashSet<Rc<String>>>)
                -> (HashMap<Rc<String>, X86Arg>, i64) {
     let mut live_intervals = HashMap::new();
-    compute_live_intervals(instrs.clone(),
+    compute_live_intervals(instrs,
                            live_sets,
                            &mut live_intervals, 1);
     let reg_alloc = allocate_registers(live_intervals);
@@ -795,7 +793,7 @@ fn decide_locs(vars: &Vec<Rc<String>>, instrs: &Vec<X86>,
         locs.insert(
             var.clone(),
             match reg_alloc.get(&var.to_string()) {
-                Some(reg) => X86Arg::Reg(REGS[reg.clone() as usize].clone()),
+                Some(reg) => X86Arg::Reg(REGS[*reg as usize].clone()),
                 None => {
                     stack_size += 1;
                     X86Arg::RegOffset(Reg::RBP, stack_size * -8)
